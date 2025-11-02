@@ -1,6 +1,7 @@
 import { createApp, h } from 'vue'
 import { createInertiaApp } from '@inertiajs/vue3'
 import { InertiaProgress } from '@inertiajs/progress'
+import './assets/main.css'
 
 createInertiaApp({
     resolve: name => import(`./Pages/${name}.vue`),

@@ -21,12 +21,20 @@ export default defineConfig({
                 entryFileNames: 'assets/main.js',
                 chunkFileNames: 'assets/[name].js',
                 assetFileNames: assetInfo => {
+                    const name = assetInfo.name ?? '';
+                    const cssLike = name.endsWith('.css');
+
+                    if (cssLike) {
+                        return 'assets/[name][extname]';
+                    }
+
                     const originals = assetInfo.originalFileNames || [];
                     const first = originals[0];
 
                     if (first)
                     {
                         let rel = path.relative(SRC_DIR, first).replace(/\\/g, '/');
+                        rel = rel.replace(/\?.*$/, '');
 
                         if (rel && !rel.startsWith('..'))
                         {

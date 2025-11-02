@@ -15,8 +15,6 @@ public class HomeController {
 
     @GetMapping("/")
     public ResponseEntity<String> index() {
-        return this.inertia.render("Home", Map.of(
-                "message", "Hello, World!"
-        ));
+        return this.inertia.render("Welcome");
     }
 }
