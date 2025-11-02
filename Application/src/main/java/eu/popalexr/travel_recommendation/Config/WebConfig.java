@@ -23,7 +23,7 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authenticatedInterceptor)
-            .addPathPatterns("/dashboard/**", "/logout");
+            .addPathPatterns("/dashboard/**", "/logout", "/api/dashboard");
 
         registry.addInterceptor(guestOnlyInterceptor)
             .addPathPatterns("/login", "/register");

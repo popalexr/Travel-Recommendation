@@ -1,127 +1,279 @@
-<script setup>
-import { computed, reactive, ref } from "vue";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { LogOut, MapPin } from "lucide-vue-next";
+﻿<script setup>
+import { ref, computed, watch, onMounted } from "vue"
+import { Button } from "@/components/ui/button"
 
 const props = defineProps({
   user: {
     type: Object,
     default: () => ({}),
   },
-});
+})
 
-const state = reactive({
-  message: "",
-  error: "",
-});
-
-const isLoggingOut = ref(false);
+const isLoggingOut = ref(false)
+const error = ref("")
+const accountMenuOpen = ref(false)
+const activeThread = ref(null)
+const previousRecommendations = ref([])
+const chatMessages = ref([])
+const dataError = ref("")
+const isLoadingData = ref(true)
 
 const displayName = computed(() => {
-  const { firstName, lastName, email } = props.user ?? {};
+  const { firstName, lastName, email } = props.user ?? {}
   if (firstName || lastName) {
-    return [firstName, lastName].filter(Boolean).join(" ");
+    const full = [firstName, lastName].filter(Boolean).join(" ").trim()
+    return full || "Traveler"
   }
-  return email ?? "Traveler";
-});
+  return email ?? "Traveler"
+})
+
+watch(
+  previousRecommendations,
+  (items) => {
+    if (!items || items.length === 0) {
+      activeThread.value = null
+      return
+    }
+    const match = items.find((item) => item.id === activeThread.value)
+    if (!match) {
+      activeThread.value = items[0]?.id ?? null
+    }
+  },
+  { immediate: true }
+)
+
+async function loadDashboardData() {
+  isLoadingData.value = true
+  dataError.value = ""
+  try {
+    const response = await fetch("/api/dashboard", {
+      credentials: "same-origin",
+    })
+    if (!response.ok) {
+      dataError.value = "Unable to fetch dashboard data."
+      return
+    }
+    const payload = await response.json().catch(() => ({}))
+    previousRecommendations.value = Array.isArray(payload.previousRecommendations)
+      ? payload.previousRecommendations
+      : []
+    chatMessages.value = Array.isArray(payload.chatMessages) ? payload.chatMessages : []
+  } catch (err) {
+    dataError.value = "Unexpected error loading dashboard."
+  } finally {
+    isLoadingData.value = false
+  }
+}
+
+onMounted(() => {
+  loadDashboardData()
+})
+
+function toggleAccountMenu() {
+  accountMenuOpen.value = !accountMenuOpen.value
+}
+
+function closeAccountMenu() {
+  accountMenuOpen.value = false
+}
+
+function goToSettings() {
+  closeAccountMenu()
+  window.location.href = "/settings"
+}
 
 async function logout() {
-  if (isLoggingOut.value) return;
-  state.message = "";
-  state.error = "";
-  isLoggingOut.value = true;
+  if (isLoggingOut.value) return
+  error.value = ""
+  isLoggingOut.value = true
   try {
     const response = await fetch("/logout", {
       method: "POST",
       credentials: "same-origin",
-    });
-    const payload = await response.json().catch(() => ({}));
+    })
+    const payload = await response.json().catch(() => ({}))
     if (!response.ok) {
-      state.error = payload?.message ?? "Unable to log out.";
-      return;
+      error.value = payload?.message ?? "Unable to log out."
+      return
     }
-    state.message = payload?.message ?? "See you soon!";
-    window.location.href = "/";
-  } catch (error) {
-    state.error = "Unexpected error. Please try again.";
+    window.location.href = "/"
+  } catch (err) {
+    error.value = "Unexpected error. Please try again."
   } finally {
-    isLoggingOut.value = false;
+    isLoggingOut.value = false
   }
 }
 </script>
 
 <template>
-  <div class="min-h-screen bg-background text-foreground">
-    <header class="border-b border-border/60 bg-background/80 backdrop-blur">
-      <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4 md:px-8">
-        <div>
-          <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground">
-            Welcome back
-          </p>
-          <h1 class="text-2xl font-semibold tracking-tight">
-            {{ displayName }}
-          </h1>
-        </div>
-        <Button variant="outline" class="gap-2" @click="logout" :disabled="isLoggingOut">
-          <LogOut class="size-4" />
-          Logout
-        </Button>
+  <div class="flex h-screen bg-background text-foreground">
+    <aside class="hidden h-full w-72 flex-col border-r border-border/60 bg-muted/30 px-4 py-6 md:flex">
+      <div>
+        <p class="text-xs uppercase tracking-[0.4em] text-muted-foreground">Trips</p>
+        <h2 class="mt-2 font-semibold text-foreground">Previous recommendations</h2>
       </div>
-    </header>
-
-    <main class="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-10 md:px-8">
-      <section class="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Trip Planning Hub</CardTitle>
-            <CardDescription>
-              Your personal recommendations, itineraries, and documents in one place.
-            </CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <p class="text-sm text-muted-foreground">
-              Upload confirmations, organise daily agendas, and regenerate ideas tailored to each journey.
-              We keep everything private to your account until you are ready to share.
+      <nav class="mt-6 flex-1 space-y-2 overflow-y-auto pr-2">
+        <template v-if="isLoadingData">
+          <div class="h-14 animate-pulse rounded-xl bg-muted/60"></div>
+          <div class="h-14 animate-pulse rounded-xl bg-muted/60"></div>
+          <div class="h-14 animate-pulse rounded-xl bg-muted/60"></div>
+        </template>
+        <template v-else>
+          <button
+            v-for="rec in previousRecommendations"
+            :key="rec.id || rec.title"
+            @click="activeThread = rec.id"
+            :class="[
+              'w-full rounded-xl px-3 py-3 text-left transition-all',
+              activeThread === rec.id
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-background/80 text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+            ]"
+          >
+            <p class="text-sm font-medium leading-tight">{{ rec.title ?? 'Untitled' }}</p>
+            <p class="mt-1 text-xs" :class="activeThread === rec.id ? 'text-primary-foreground/80' : 'text-muted-foreground/80'">
+              {{ rec.subtitle ?? 'No metadata available' }}
             </p>
-            <Separator />
-            <div class="grid gap-4 sm:grid-cols-2">
-              <div class="rounded-xl border border-border/70 bg-background/70 p-4">
-                <p class="font-medium text-foreground flex items-center gap-2">
-                  <MapPin class="size-4 text-primary" />
-                  Next steps
-                </p>
-                <ul class="mt-3 space-y-2 text-sm text-muted-foreground">
-                  <li>Upload your latest travel documents.</li>
-                  <li>Annotate preferences for each traveler.</li>
-                  <li>Generate itineraries with one click.</li>
-                </ul>
-              </div>
-              <div class="rounded-xl border border-border/70 bg-background/70 p-4">
-                <p class="font-medium text-foreground">Account snapshot</p>
-                <p class="mt-2 text-sm text-muted-foreground">
-                  Email: <span class="font-medium text-foreground">{{ props.user?.email }}</span>
-                </p>
-                <p class="text-xs text-muted-foreground/80">
-                  Keep your contact details current so concierge notifications reach you instantly.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div v-if="state.message" class="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-primary">
-          {{ state.message }}
+          </button>
+          <p v-if="!previousRecommendations.length" class="text-xs text-muted-foreground/80">
+            No recommendations yet. They will appear here once generated.
+          </p>
+        </template>
+      </nav>
+      <div class="border-t border-border/50 pt-4">
+        <div class="relative">
+          <button
+            class="flex w-full items-center justify-between rounded-xl bg-background/80 px-3 py-3 text-sm font-medium text-foreground transition hover:bg-muted"
+            @click="toggleAccountMenu"
+          >
+            <span>{{ displayName }}</span>
+            <svg
+              class="size-4 text-muted-foreground transition-transform"
+              :class="accountMenuOpen ? 'rotate-180' : ''"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                fill-rule="evenodd"
+                d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </button>
+          <div
+            v-if="accountMenuOpen"
+            class="absolute bottom-14 left-0 w-full rounded-xl border border-border/50 bg-background/95 shadow-lg backdrop-blur"
+          >
+            <button
+              class="w-full px-4 py-2 text-left text-sm text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+              @click="goToSettings"
+            >
+              Settings
+            </button>
+            <button
+              class="w-full px-4 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
+              @click="logout"
+              :disabled="isLoggingOut"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
-        <div v-if="state.error" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {{ state.error }}
+      </div>
+    </aside>
+
+    <main class="flex flex-1 flex-col overflow-hidden bg-background">
+      <header class="border-b border-border/60 bg-background/80 px-6 py-5 backdrop-blur lg:px-10">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">
+              Project companion
+            </h1>
+            <p class="text-sm text-muted-foreground">
+              Based on the Travel Recommendation documentation.
+            </p>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-muted-foreground">
+            <span class="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-500">Online</span>
+            {{ new Date().toLocaleDateString() }}
+          </div>
+        </div>
+        <p v-if="dataError" class="mt-3 text-xs text-destructive">{{ dataError }}</p>
+      </header>
+
+      <section class="relative flex flex-1 flex-col overflow-hidden">
+        <div class="flex-1 overflow-y-auto px-6 py-6 lg:px-10">
+          <div class="mx-auto w-full max-w-4xl space-y-6">
+            <template v-if="isLoadingData">
+              <div class="h-28 animate-pulse rounded-3xl bg-muted/50"></div>
+              <div class="h-24 animate-pulse rounded-3xl bg-muted/50"></div>
+            </template>
+            <template v-else>
+              <template v-if="chatMessages.length">
+                <div
+                  v-for="message in chatMessages"
+                  :key="message.id || message.timestamp"
+                  :class="[
+                    'rounded-2xl border px-4 py-4 shadow-sm',
+                    message.role === 'assistant'
+                      ? 'border-border/70 bg-background/90'
+                      : 'border-transparent bg-primary/5 text-primary'
+                  ]"
+                >
+                  <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground/80">
+                    {{ message.role === 'assistant' ? 'Assistant' : 'You' }}
+                    <span class="ml-2 text-muted-foreground/60">{{ message.timestamp ?? '' }}</span>
+                  </p>
+                  <div class="mt-3 space-y-3 text-sm leading-relaxed">
+                    <template v-if="message.title">
+                      <p class="text-sm font-semibold text-foreground">{{ message.title }}</p>
+                    </template>
+                    <template v-if="Array.isArray(message.content)">
+                      <ul class="space-y-3">
+                        <li
+                          v-for="(paragraph, idx) in message.content"
+                          :key="idx"
+                          class="rounded-xl bg-muted/40 px-3 py-2 text-muted-foreground"
+                        >
+                          {{ paragraph }}
+                        </li>
+                      </ul>
+                    </template>
+                    <template v-else-if="message.content">
+                      <p class="text-muted-foreground">{{ message.content }}</p>
+                    </template>
+                    <p v-if="!message.content && !Array.isArray(message.content)" class="text-muted-foreground/70">
+                      No details recorded.
+                    </p>
+                  </div>
+                </div>
+              </template>
+              <div v-else class="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center text-sm text-muted-foreground">
+                No conversation yet. Once the assistant generates recommendations, they will appear here.
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="border-t border-border/60 bg-background/95 px-6 py-5 lg:px-10">
+          <div class="mx-auto flex w-full max-w-4xl items-end gap-3 rounded-2xl border border-border/70 bg-background/80 px-4 py-3 shadow-sm">
+            <textarea
+              class="h-20 flex-1 resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              placeholder="Ask about the project documentation..."
+              disabled
+            />
+            <Button variant="outline" disabled>Coming soon</Button>
+          </div>
+          <p class="mt-2 text-center text-xs text-muted-foreground">
+            Information may be inaccurate or outdated—verify with reliable sources before making decisions.
+          </p>
+          <div
+            v-if="error.value"
+            class="mx-auto mt-3 w-full max-w-4xl rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            {{ error.value }}
+          </div>
         </div>
       </section>
     </main>

@@ -1,0 +1,1 @@
+import{A as t,x as o,l as r}from"./main.js";const a={class:"min-h-screen bg-background text-foreground"},l={__name:"AppLayout",props:{title:{type:String,default:"Travel Recommendation"}},setup(n){return(e,s)=>(r(),t("div",a,[o(e.$slots,"default")]))}};export{l as default};
