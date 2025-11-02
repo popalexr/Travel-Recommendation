@@ -1,11 +1,10 @@
 <script setup>
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -18,21 +17,34 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowRight,
   LockKeyhole,
   Mail,
-  ShieldCheck,
   UserPlus,
 } from "lucide-vue-next";
 
 const rememberMe = ref(true);
+
+const props = defineProps({
+  initialTab: {
+    type: String,
+    default: "login",
+  },
+});
+
+const normalizeTab = (value) =>
+  value === "register" ? "register" : "login";
+
+const activeTab = ref(normalizeTab(props.initialTab));
+
+watch(
+  () => props.initialTab,
+  (value) => {
+    activeTab.value = normalizeTab(value);
+  },
+);
 </script>
 
 <template>
@@ -46,41 +58,24 @@ const rememberMe = ref(true);
 
     <div class="w-full max-w-md">
       <div class="mb-8 flex flex-col items-center gap-2 text-center">
-        <Badge variant="secondary" class="border border-primary/20 bg-primary/10 text-primary">
-          Travel Compass Concierge
-        </Badge>
         <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Welcome back, traveler
+          Travel Recommendation
         </h1>
         <p class="max-w-sm text-sm text-muted-foreground">
-          Sign in to orchestrate your next journey or create an account to unlock curated itineraries, saved collections, and real-time concierge support.
+          Sign in or create your account to manage itineraries and saved trips.
         </p>
       </div>
 
       <Card class="border border-border/70 bg-background/80 shadow-2xl backdrop-blur">
-        <CardHeader class="space-y-3">
-          <div class="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-muted-foreground">
-            <ShieldCheck class="size-4" />
-            Secure access portal
-          </div>
+        <CardHeader>
           <CardTitle class="text-2xl">Travel Compass Account</CardTitle>
           <CardDescription class="text-sm text-muted-foreground">
-            Use your account email to sync itineraries, invites, and concierge chat.
+            Use your email to sync itineraries across devices.
           </CardDescription>
         </CardHeader>
 
-        <CardContent class="space-y-6">
-          <Alert variant="default" class="border-primary/30 bg-primary/5 text-sm">
-            <ShieldCheck class="size-4" />
-            <div>
-              <AlertTitle>Beta Access</AlertTitle>
-              <AlertDescription>
-                We are onboarding travelers in waves. New accounts receive a complimentary itinerary design session.
-              </AlertDescription>
-            </div>
-          </Alert>
-
-          <Tabs default-value="login" class="w-full">
+        <CardContent>
+          <Tabs v-model="activeTab" class="w-full">
             <TabsList class="grid w-full grid-cols-2">
               <TabsTrigger value="login" class="text-sm">
                 <span class="flex items-center gap-2">
@@ -117,7 +112,7 @@ const rememberMe = ref(true);
                     <Input
                       id="login-password"
                       type="password"
-                      placeholder="••••••••"
+                      placeholder="********"
                       class="pl-10"
                     />
                   </div>
@@ -140,12 +135,6 @@ const rememberMe = ref(true);
                   <ArrowRight class="size-4" />
                 </Button>
               </form>
-              <p class="text-center text-xs text-muted-foreground">
-                By continuing you agree to our
-                <a href="#" class="font-medium text-primary hover:underline">Terms of Service</a>
-                and
-                <a href="#" class="font-medium text-primary hover:underline">Privacy Policy</a>.
-              </p>
             </TabsContent>
 
             <TabsContent value="register" class="space-y-5 pt-4">
@@ -168,33 +157,14 @@ const rememberMe = ref(true);
                   <Label for="register-password">Create password</Label>
                   <Input id="register-password" type="password" placeholder="At least 8 characters" autocomplete="new-password" />
                 </div>
-                <div class="space-y-2">
-                  <Label for="register-travel-style">Preferred travel style</Label>
-                  <Input id="register-travel-style" placeholder="Ex: Culinary discoveries, hidden nature retreats" />
-                  <p class="text-xs text-muted-foreground">
-                    We will use this to seed a welcome itinerary inside your dashboard.
-                  </p>
-                </div>
                 <Button type="submit" class="w-full gap-2">
                   Create my account
                   <ArrowRight class="size-4" />
                 </Button>
               </form>
-              <p class="text-center text-xs text-muted-foreground">
-                We respect your inbox. Expect thoughtful trip inspiration, never spam.
-              </p>
             </TabsContent>
           </Tabs>
         </CardContent>
-
-        <CardFooter class="flex flex-col gap-3 text-center text-xs text-muted-foreground">
-          <p>
-            Need concierge access for your team or family?
-            <Button variant="link" size="sm" class="px-1 text-sm text-primary">
-              Schedule a consult
-            </Button>
-          </p>
-        </CardFooter>
       </Card>
     </div>
   </div>
@@ -205,3 +175,5 @@ const rememberMe = ref(true);
   background: radial-gradient(circle at top, hsl(var(--primary) / 0.25), transparent 60%);
 }
 </style>
+
+

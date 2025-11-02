@@ -14,10 +14,12 @@ import {
   Edit3,
   FileUp,
   Info,
+  LockKeyhole,
   RefreshCcw,
   Sparkles,
   Layers,
   UserCheck,
+  UserPlus,
   Wand2,
 } from "lucide-vue-next";
 
@@ -75,6 +77,29 @@ const workflow = [
   },
 ];
 
+const authOptions = [
+  {
+    icon: LockKeyhole,
+    title: "Login",
+    description:
+      "Returning travelers access saved itineraries, regenerate suggestions, and pick up where planning left off.",
+    action: {
+      label: "Go to login",
+      href: "/login",
+    },
+  },
+  {
+    icon: UserPlus,
+    title: "Register",
+    description:
+      "Create an account to store trip documents securely and personalize every recommendation from day one.",
+    action: {
+      label: "Create account",
+      href: "/register",
+    },
+  },
+];
+
 const commitments = [
   {
     title: "Human-centred design",
@@ -125,6 +150,9 @@ const commitments = [
           <Button variant="ghost" class="text-sm" as-child>
             <a href="#workflow">How it works</a>
           </Button>
+          <Button variant="ghost" class="text-sm" as-child>
+            <a href="#auth">Auth</a>
+          </Button>
         </nav>
 
         <Button variant="outline" size="sm" class="md:hidden">
@@ -173,7 +201,7 @@ const commitments = [
               <ArrowRight class="size-4" />
             </Button>
             <Button variant="outline" size="lg" as-child>
-              <a href="#workflow">Explore the workflow</a>
+              <a href="#auth">Visit auth options</a>
             </Button>
           </div>
         </div>
@@ -287,6 +315,45 @@ const commitments = [
         </div>
       </section>
 
+      <section id="auth" class="space-y-10">
+        <div class="flex flex-col gap-3 text-center">
+          <Badge variant="secondary" class="mx-auto w-fit bg-secondary/40">
+            Auth
+          </Badge>
+          <h2 class="text-3xl font-semibold tracking-tight sm:text-4xl">
+            Secure access tailored for travelers
+          </h2>
+          <p class="mx-auto max-w-3xl text-muted-foreground">
+            Whether you are returning to refine an itinerary or joining the platform
+            for the first time, the authentication flow keeps documents protected
+            and experiences personal.
+          </p>
+        </div>
+
+        <div class="grid gap-6 md:grid-cols-2">
+          <Card v-for="option in authOptions" :key="option.title">
+            <CardHeader class="space-y-3">
+              <div
+                class="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary"
+              >
+                <component :is="option.icon" class="size-5" />
+              </div>
+              <CardTitle class="text-xl">
+                {{ option.title }}
+              </CardTitle>
+            </CardHeader>
+            <CardContent class="space-y-3 text-sm text-muted-foreground">
+              <p>{{ option.description }}</p>
+              <Button variant="outline" size="sm" as-child>
+                <a :href="option.action.href">
+                  {{ option.action.label }}
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
       <section class="space-y-10">
         <div class="flex flex-col gap-3 text-center">
           <Badge variant="secondary" class="mx-auto w-fit bg-secondary/40">
@@ -320,17 +387,14 @@ const commitments = [
             the final booking checklist.
           </p>
           <div class="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button size="lg" class="gap-2">
-              Create your first trip
-              <ArrowRight class="size-4" />
+            <Button size="lg" class="gap-2" as-child>
+              <a href="/register">
+                Create your first trip
+                <ArrowRight class="size-4" />
+              </a>
             </Button>
             <Button variant="ghost" size="lg" as-child>
-              <a
-                href="/Docs/Documenta%C8%9Bie___Proiectare_Web%20(1).pdf"
-                download
-              >
-                Download project brief
-              </a>
+              <a href="/login">Sign in instead</a>
             </Button>
           </div>
         </div>
