@@ -3,7 +3,6 @@ package eu.popalexr.travel_recommendation.Interceptors;
 import eu.popalexr.travel_recommendation.Constants.SessionConstants;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpSession;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -16,8 +15,8 @@ public class AuthenticatedInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws IOException {
-        HttpSession session = request.getSession(false);
-        if (session != null && session.getAttribute(SessionConstants.AUTHENTICATED_USER_ID) != null) {
+        Object uid = request.getAttribute(SessionConstants.AUTHENTICATED_USER_ID);
+        if (uid != null) {
             return true;
         }
 

@@ -3,7 +3,7 @@ package eu.popalexr.travel_recommendation.Controllers;
 import eu.popalexr.travel_recommendation.Constants.SessionConstants;
 import eu.popalexr.travel_recommendation.Repositories.UserRepository;
 import io.github.inertia4j.spring.Inertia;
-import jakarta.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,8 +22,8 @@ public class DashboardController {
     }
 
     @GetMapping("/dashboard")
-    public ResponseEntity<String> dashboard(HttpSession session) {
-        Long userId = (Long) session.getAttribute(SessionConstants.AUTHENTICATED_USER_ID);
+    public ResponseEntity<String> dashboard(HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute(SessionConstants.AUTHENTICATED_USER_ID);
 
         return userRepository.findById(userId)
             .map(user -> this.inertia.render("Dashboard", Map.of(
