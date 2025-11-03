@@ -26,6 +26,6 @@ public class WebConfig implements WebMvcConfigurer {
             .addPathPatterns("/dashboard/**", "/logout", "/api/dashboard");
 
         registry.addInterceptor(guestOnlyInterceptor)
-            .addPathPatterns("/login", "/register");
+            .addPathPatterns("/login", "/register", "/");
     }
 }
