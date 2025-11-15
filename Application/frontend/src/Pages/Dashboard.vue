@@ -1,6 +1,10 @@
 ﻿<script setup>
 import { ref, computed, watch, onMounted } from "vue"
 import { Button } from "@/components/ui/button"
+import UploadAttachmentModal from "@/components/UploadAttachmentModal.vue"
+import TicketUploadModal from "@/components/TicketUploadModal.vue"
+import AccommodationUploadModal from "@/components/AccommodationUploadModal.vue"
+import OtherUploadModal from "@/components/OtherUploadModal.vue"
 
 const props = defineProps({
   user: {
@@ -16,6 +20,18 @@ const activeThread = ref(null)
 const previousRecommendations = ref([])
 const chatMessages = ref([])
 const isUploadModalOpen = ref(false)
+const isTicketUploadModalOpen = ref(false)
+const isTicketDragActive = ref(false)
+const ticketFiles = ref([])
+const ticketFileInput = ref(null)
+const isAccommodationUploadModalOpen = ref(false)
+const isAccommodationDragActive = ref(false)
+const accommodationFiles = ref([])
+const accommodationFileInput = ref(null)
+const isOtherUploadModalOpen = ref(false)
+const isOtherDragActive = ref(false)
+const otherFiles = ref([])
+const otherFileInput = ref(null)
 const dataError = ref("")
 const isLoadingData = ref(true)
 
@@ -103,6 +119,137 @@ async function logout() {
   } finally {
     isLoggingOut.value = false
   }
+}
+
+function openUploadModal() {
+  isUploadModalOpen.value = true
+}
+
+function closeUploadModal() {
+  isUploadModalOpen.value = false
+}
+
+function openTicketUploadModal() {
+  isUploadModalOpen.value = false
+  isTicketUploadModalOpen.value = true
+}
+
+function closeTicketUploadModal() {
+  isTicketUploadModalOpen.value = false
+}
+
+function openAccommodationUploadModal() {
+  isUploadModalOpen.value = false
+  isAccommodationUploadModalOpen.value = true
+}
+
+function closeAccommodationUploadModal() {
+  isAccommodationUploadModalOpen.value = false
+}
+
+function openOtherUploadModal() {
+  isUploadModalOpen.value = false
+  isOtherUploadModalOpen.value = true
+}
+
+function closeOtherUploadModal() {
+  isOtherUploadModalOpen.value = false
+}
+
+function openTicketFileDialog() {
+  if (ticketFileInput.value) {
+    ticketFileInput.value.click()
+  }
+}
+
+function addTicketFiles(files) {
+  if (!files || !files.length) return
+  const accepted = Array.from(files).filter((file) => {
+    if (!file || !file.type) return false
+    return file.type.startsWith("image/") || file.type === "application/pdf"
+  })
+  if (!accepted.length) return
+  ticketFiles.value = [...ticketFiles.value, ...accepted]
+}
+
+function handleTicketFileChange(event) {
+  const files = event?.target?.files
+  addTicketFiles(files)
+}
+
+function handleTicketDrop(event) {
+  const files = event?.dataTransfer?.files
+  addTicketFiles(files)
+  isTicketDragActive.value = false
+}
+
+function removeTicketFile(index) {
+  if (index < 0 || index >= ticketFiles.value.length) return
+  ticketFiles.value.splice(index, 1)
+}
+
+function openAccommodationFileDialog() {
+  if (accommodationFileInput.value) {
+    accommodationFileInput.value.click()
+  }
+}
+
+function addAccommodationFiles(files) {
+  if (!files || !files.length) return
+  const accepted = Array.from(files).filter((file) => {
+    if (!file || !file.type) return false
+    return file.type.startsWith("image/") || file.type === "application/pdf"
+  })
+  if (!accepted.length) return
+  accommodationFiles.value = [...accommodationFiles.value, ...accepted]
+}
+
+function handleAccommodationFileChange(event) {
+  const files = event?.target?.files
+  addAccommodationFiles(files)
+}
+
+function handleAccommodationDrop(event) {
+  const files = event?.dataTransfer?.files
+  addAccommodationFiles(files)
+  isAccommodationDragActive.value = false
+}
+
+function removeAccommodationFile(index) {
+  if (index < 0 || index >= accommodationFiles.value.length) return
+  accommodationFiles.value.splice(index, 1)
+}
+
+function openOtherFileDialog() {
+  if (otherFileInput.value) {
+    otherFileInput.value.click()
+  }
+}
+
+function addOtherFiles(files) {
+  if (!files || !files.length) return
+  const accepted = Array.from(files).filter((file) => {
+    if (!file || !file.type) return false
+    return file.type.startsWith("image/") || file.type === "application/pdf"
+  })
+  if (!accepted.length) return
+  otherFiles.value = [...otherFiles.value, ...accepted]
+}
+
+function handleOtherFileChange(event) {
+  const files = event?.target?.files
+  addOtherFiles(files)
+}
+
+function handleOtherDrop(event) {
+  const files = event?.dataTransfer?.files
+  addOtherFiles(files)
+  isOtherDragActive.value = false
+}
+
+function removeOtherFile(index) {
+  if (index < 0 || index >= otherFiles.value.length) return
+  otherFiles.value.splice(index, 1)
 }
 </script>
 
@@ -263,7 +410,7 @@ async function logout() {
               variant="outline"
               size="icon"
               class="shrink-0"
-              @click="isUploadModalOpen = true"
+              @click="openUploadModal"
               aria-label="Attach travel documents"
             >
               <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
@@ -290,21 +437,29 @@ async function logout() {
           </div>
         </div>
 
-        <div
+        <UploadAttachmentModal
           v-if="isUploadModalOpen"
-          class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          @close="closeUploadModal"
+          @ticket="openTicketUploadModal"
+          @accommodation="openAccommodationUploadModal"
+          @other="openOtherUploadModal"
+        />
+
+        <div
+          v-if="false && isTicketUploadModalOpen"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
         >
-          <div class="w-full max-w-sm rounded-2xl border border-border bg-background p-6 shadow-xl">
+          <div class="w-full max-w-lg rounded-3xl border border-border bg-gradient-to-b from-background/95 to-muted/80 p-6 shadow-2xl">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <h2 class="text-base font-semibold text-foreground">Attach travel documents</h2>
+                <h2 class="text-base font-semibold text-foreground">Upload airplane ticket</h2>
                 <p class="mt-1 text-xs text-muted-foreground">
-                  Upload tickets or invoices related to this trip.
+                  Drag and drop your ticket here, or browse files from your device.
                 </p>
               </div>
               <button
                 class="rounded-full p-1 text-muted-foreground hover:bg-muted"
-                @click="isUploadModalOpen = false"
+                @click="closeTicketUploadModal"
                 aria-label="Close"
               >
                 <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
@@ -316,34 +471,396 @@ async function logout() {
                 </svg>
               </button>
             </div>
-            <div class="mt-4 space-y-2">
-              <Button
-                variant="outline"
-                class="w-full justify-start"
-                @click="isUploadModalOpen = false"
+
+            <div class="mt-5 space-y-4">
+              <div
+                class="relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition"
+                :class="[
+                  isTicketDragActive
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border/70 bg-muted/40 hover:border-primary/60 hover:bg-muted/60'
+                ]"
+                @click="openTicketFileDialog"
+                @dragover.prevent="isTicketDragActive = true"
+                @dragleave.prevent="isTicketDragActive = false"
+                @drop.prevent="handleTicketDrop"
               >
-                Upload airplane ticket
-              </Button>
-              <Button
-                variant="outline"
-                class="w-full justify-start"
-                @click="isUploadModalOpen = false"
+                <div class="mb-3 flex items-center justify-center rounded-full bg-primary/10 p-3 text-primary">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-6 w-6">
+                    <path
+                      d="M7 10.5L12 5.5L17 10.5M12 6V16.5"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M6 18.5C4.067 18.5 2.5 16.933 2.5 15C2.5 13.067 4.067 11.5 6 11.5H7M18 11.5C19.933 11.5 21.5 13.067 21.5 15C21.5 16.933 19.933 18.5 18 18.5H13"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </div>
+                <p class="text-sm font-medium text-foreground">Drop your ticket PDF or image here</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Supports PDF and image files. Max 10MB per file.
+                </p>
+                <button
+                  type="button"
+                  class="mt-4 rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90"
+                >
+                  Browse files
+                </button>
+                <input
+                  ref="ticketFileInput"
+                  type="file"
+                  class="hidden"
+                  multiple
+                  accept="image/*,application/pdf"
+                  @change="handleTicketFileChange"
+                />
+              </div>
+
+              <div
+                v-if="ticketFiles.length"
+                class="max-h-40 space-y-2 overflow-y-auto rounded-xl border border-border/70 bg-background/70 px-3 py-2"
               >
-                Upload accomodation invoice
-              </Button>
-              <Button
-                variant="outline"
-                class="w-full justify-start"
-                @click="isUploadModalOpen = false"
-              >
-                Upload other document
-              </Button>
+                <p class="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  Selected files
+                </p>
+                <div
+                  v-for="(file, index) in ticketFiles"
+                  :key="index"
+                  class="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2 text-xs text-foreground"
+                >
+                  <div class="flex min-w-0 flex-1 items-center gap-2">
+                    <div class="flex size-6 items-center justify-center rounded-full bg-background/80 text-[10px] text-muted-foreground">
+                      {{ index + 1 }}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="truncate font-medium">{{ file.name }}</p>
+                      <p class="text-[11px] text-muted-foreground">
+                        {{ (file.size / 1024 / 1024).toFixed(2) }} MB
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="ml-3 rounded-full p-1 text-[10px] text-muted-foreground hover:bg-background/70"
+                    @click="removeTicketFile(index)"
+                    aria-label="Remove file"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div v-else class="rounded-xl bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+                No files selected yet.
+              </div>
             </div>
-            <p class="mt-3 text-[11px] text-muted-foreground">
-              Uploading is not yet implemented in this prototype.
-            </p>
+
+            <div class="mt-5 flex items-center justify-end gap-3">
+              <button
+                class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
+                @click="closeTicketUploadModal"
+              >
+                Cancel
+              </button>
+              <button
+                class="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="!ticketFiles.length"
+                @click="closeTicketUploadModal"
+              >
+                Attach ticket
+              </button>
+            </div>
           </div>
         </div>
+
+        <div
+          v-if="false && isAccommodationUploadModalOpen"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        >
+          <div class="w-full max-w-lg rounded-3xl border border-border bg-gradient-to-b from-background/95 to-muted/80 p-6 shadow-2xl">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-foreground">Upload accomodation invoice</h2>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Drag and drop your invoice here, or browse files from your device.
+                </p>
+              </div>
+              <button
+                class="rounded-full p-1 text-muted-foreground hover:bg-muted"
+                @click="closeAccommodationUploadModal"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.22 5.22a.75.75 0 011.06 0L10 8.94l3.72-3.72a.75.75 0 111.06 1.06L11.06 10l3.72 3.72a.75.75 0 11-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 11-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 010-1.06z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div class="mt-5 space-y-4">
+              <div
+                class="relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition"
+                :class="[
+                  isAccommodationDragActive
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border/70 bg-muted/40 hover:border-primary/60 hover:bg-muted/60'
+                ]"
+                @click="openAccommodationFileDialog"
+                @dragover.prevent="isAccommodationDragActive = true"
+                @dragleave.prevent="isAccommodationDragActive = false"
+                @drop.prevent="handleAccommodationDrop"
+              >
+                <div class="mb-3 flex items-center justify-center rounded-full bg-primary/10 p-3 text-primary">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-6 w-6">
+                    <path
+                      d="M7 10.5L12 5.5L17 10.5M12 6V16.5"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M6 18.5C4.067 18.5 2.5 16.933 2.5 15C2.5 13.067 4.067 11.5 6 11.5H7M18 11.5C19.933 11.5 21.5 13.067 21.5 15C21.5 16.933 19.933 18.5 18 18.5H13"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </div>
+                <p class="text-sm font-medium text-foreground">Drop your invoice PDF or image here</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Supports PDF and image files. Max 10MB per file.
+                </p>
+                <button
+                  type="button"
+                  class="mt-4 rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90"
+                >
+                  Browse files
+                </button>
+                <input
+                  ref="accommodationFileInput"
+                  type="file"
+                  class="hidden"
+                  multiple
+                  accept="image/*,application/pdf"
+                  @change="handleAccommodationFileChange"
+                />
+              </div>
+
+              <div
+                v-if="accommodationFiles.length"
+                class="max-h-40 space-y-2 overflow-y-auto rounded-xl border border-border/70 bg-background/70 px-3 py-2"
+              >
+                <p class="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  Selected files
+                </p>
+                <div
+                  v-for="(file, index) in accommodationFiles"
+                  :key="index"
+                  class="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2 text-xs text-foreground"
+                >
+                  <div class="flex min-w-0 flex-1 items-center gap-2">
+                    <div class="flex size-6 items-center justify-center rounded-full bg-background/80 text-[10px] text-muted-foreground">
+                      {{ index + 1 }}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="truncate font-medium">{{ file.name }}</p>
+                      <p class="text-[11px] text-muted-foreground">
+                        {{ (file.size / 1024 / 1024).toFixed(2) }} MB
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="ml-3 rounded-full p-1 text-[10px] text-muted-foreground hover:bg-background/70"
+                    @click="removeAccommodationFile(index)"
+                    aria-label="Remove file"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div v-else class="rounded-xl bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+                No files selected yet.
+              </div>
+            </div>
+
+            <div class="mt-5 flex items-center justify-end gap-3">
+              <button
+                class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
+                @click="closeAccommodationUploadModal"
+              >
+                Cancel
+              </button>
+              <button
+                class="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="!accommodationFiles.length"
+                @click="closeAccommodationUploadModal"
+              >
+                Attach invoice
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="false && isOtherUploadModalOpen"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        >
+          <div class="w-full max-w-lg rounded-3xl border border-border bg-gradient-to-b from-background/95 to-muted/80 p-6 shadow-2xl">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-foreground">Upload other document</h2>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Drag and drop any supporting document here, or browse files from your device.
+                </p>
+              </div>
+              <button
+                class="rounded-full p-1 text-muted-foreground hover:bg-muted"
+                @click="closeOtherUploadModal"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.22 5.22a.75.75 0 011.06 0L10 8.94l3.72-3.72a.75.75 0 111.06 1.06L11.06 10l3.72 3.72a.75.75 0 11-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 11-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 010-1.06z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div class="mt-5 space-y-4">
+              <div
+                class="relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition"
+                :class="[
+                  isOtherDragActive
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border/70 bg-muted/40 hover:border-primary/60 hover:bg-muted/60'
+                ]"
+                @click="openOtherFileDialog"
+                @dragover.prevent="isOtherDragActive = true"
+                @dragleave.prevent="isOtherDragActive = false"
+                @drop.prevent="handleOtherDrop"
+              >
+                <div class="mb-3 flex items-center justify-center rounded-full bg-primary/10 p-3 text-primary">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-6 w-6">
+                    <path
+                      d="M7 10.5L12 5.5L17 10.5M12 6V16.5"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M6 18.5C4.067 18.5 2.5 16.933 2.5 15C2.5 13.067 4.067 11.5 6 11.5H7M18 11.5C19.933 11.5 21.5 13.067 21.5 15C21.5 16.933 19.933 18.5 18 18.5H13"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </div>
+                <p class="text-sm font-medium text-foreground">Drop your document PDF or image here</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Supports PDF and image files. Max 10MB per file.
+                </p>
+                <button
+                  type="button"
+                  class="mt-4 rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90"
+                >
+                  Browse files
+                </button>
+                <input
+                  ref="otherFileInput"
+                  type="file"
+                  class="hidden"
+                  multiple
+                  accept="image/*,application/pdf"
+                  @change="handleOtherFileChange"
+                />
+              </div>
+
+              <div
+                v-if="otherFiles.length"
+                class="max-h-40 space-y-2 overflow-y-auto rounded-xl border border-border/70 bg-background/70 px-3 py-2"
+              >
+                <p class="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  Selected files
+                </p>
+                <div
+                  v-for="(file, index) in otherFiles"
+                  :key="index"
+                  class="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2 text-xs text-foreground"
+                >
+                  <div class="flex min-w-0 flex-1 items-center gap-2">
+                    <div class="flex size-6 items-center justify-center rounded-full bg-background/80 text-[10px] text-muted-foreground">
+                      {{ index + 1 }}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="truncate font-medium">{{ file.name }}</p>
+                      <p class="text-[11px] text-muted-foreground">
+                        {{ (file.size / 1024 / 1024).toFixed(2) }} MB
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="ml-3 rounded-full p-1 text-[10px] text-muted-foreground hover:bg-background/70"
+                    @click="removeOtherFile(index)"
+                    aria-label="Remove file"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div v-else class="rounded-xl bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+                No files selected yet.
+              </div>
+            </div>
+
+            <div class="mt-5 flex items-center justify-end gap-3">
+              <button
+                class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
+                @click="closeOtherUploadModal"
+              >
+                Cancel
+              </button>
+              <button
+                class="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="!otherFiles.length"
+                @click="closeOtherUploadModal"
+              >
+                Attach document
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <TicketUploadModal
+          v-if="isTicketUploadModalOpen"
+          @close="closeTicketUploadModal"
+        />
+
+        <AccommodationUploadModal
+          v-if="isAccommodationUploadModalOpen"
+          @close="closeAccommodationUploadModal"
+        />
+
+        <OtherUploadModal
+          v-if="isOtherUploadModalOpen"
+          @close="closeOtherUploadModal"
+        />
       </section>
     </main>
   </div>
