@@ -15,6 +15,7 @@ const accountMenuOpen = ref(false)
 const activeThread = ref(null)
 const previousRecommendations = ref([])
 const chatMessages = ref([])
+const isUploadModalOpen = ref(false)
 const dataError = ref("")
 const isLoadingData = ref(true)
 
@@ -188,10 +189,10 @@ async function logout() {
         <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">
-              Project companion
+              Travel Recommendation Dashboard
             </h1>
             <p class="text-sm text-muted-foreground">
-              Based on the Travel Recommendation documentation.
+              Overview of the Travel Recommendation project and generated trips.
             </p>
           </div>
           <div class="flex items-center gap-2 text-xs text-muted-foreground">
@@ -222,7 +223,7 @@ async function logout() {
                   ]"
                 >
                   <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground/80">
-                    {{ message.role === 'assistant' ? 'Assistant' : 'You' }}
+                    {{ message.role === 'assistant' ? 'Recommendation engine' : 'You' }}
                     <span class="ml-2 text-muted-foreground/60">{{ message.timestamp ?? '' }}</span>
                   </p>
                   <div class="mt-3 space-y-3 text-sm leading-relaxed">
@@ -250,29 +251,97 @@ async function logout() {
                 </div>
               </template>
               <div v-else class="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                No conversation yet. Once the assistant generates recommendations, they will appear here.
+                No project activity yet. Once the recommendation engine generates travel suggestions, they will be summarized here.
               </div>
             </template>
           </div>
         </div>
 
         <div class="border-t border-border/60 bg-background/95 px-6 py-5 lg:px-10">
-          <div class="mx-auto flex w-full max-w-4xl items-end gap-3 rounded-2xl border border-border/70 bg-background/80 px-4 py-3 shadow-sm">
+          <div class="mx-auto flex w-full max-w-4xl items-center gap-3 rounded-2xl border border-border/70 bg-background/80 px-4 py-3 shadow-sm">
+            <Button
+              variant="outline"
+              size="icon"
+              class="shrink-0"
+              @click="isUploadModalOpen = true"
+              aria-label="Attach travel documents"
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                <path
+                  fill-rule="evenodd"
+                  d="M10 3.25a.75.75 0 01.75.75v5.25H16a.75.75 0 010 1.5h-5.25V16a.75.75 0 01-1.5 0v-5.25H4a.75.75 0 010-1.5h5.25V4a.75.75 0 01.75-.75z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+            </Button>
             <textarea
               class="h-20 flex-1 resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-              placeholder="Ask about the project documentation..."
-              disabled
             />
-            <Button variant="outline" disabled>Coming soon</Button>
+            <Button variant="outline">Coming soon</Button>
           </div>
           <p class="mt-2 text-center text-xs text-muted-foreground">
-            Information may be inaccurate or outdated—verify with reliable sources before making decisions.
+            Recommendations are indicative only—always verify travel details (flights, visas, restrictions) before booking.
           </p>
           <div
             v-if="error.value"
             class="mx-auto mt-3 w-full max-w-4xl rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
           >
             {{ error.value }}
+          </div>
+        </div>
+
+        <div
+          v-if="isUploadModalOpen"
+          class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        >
+          <div class="w-full max-w-sm rounded-2xl border border-border bg-background p-6 shadow-xl">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-foreground">Attach travel documents</h2>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Upload tickets or invoices related to this trip.
+                </p>
+              </div>
+              <button
+                class="rounded-full p-1 text-muted-foreground hover:bg-muted"
+                @click="isUploadModalOpen = false"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.22 5.22a.75.75 0 011.06 0L10 8.94l3.72-3.72a.75.75 0 111.06 1.06L11.06 10l3.72 3.72a.75.75 0 11-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 11-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 010-1.06z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div class="mt-4 space-y-2">
+              <Button
+                variant="outline"
+                class="w-full justify-start"
+                @click="isUploadModalOpen = false"
+              >
+                Upload airplane ticket
+              </Button>
+              <Button
+                variant="outline"
+                class="w-full justify-start"
+                @click="isUploadModalOpen = false"
+              >
+                Upload accomodation invoice
+              </Button>
+              <Button
+                variant="outline"
+                class="w-full justify-start"
+                @click="isUploadModalOpen = false"
+              >
+                Upload other document
+              </Button>
+            </div>
+            <p class="mt-3 text-[11px] text-muted-foreground">
+              Uploading is not yet implemented in this prototype.
+            </p>
           </div>
         </div>
       </section>
