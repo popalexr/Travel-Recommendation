@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { ref, computed, watch, onMounted } from "vue"
+import { ref, computed, watch, onMounted, nextTick } from "vue"
 import { Button } from "@/components/ui/button"
 import UploadAttachmentModal from "@/components/UploadAttachmentModal.vue"
 import TicketUploadModal from "@/components/TicketUploadModal.vue"
@@ -19,6 +19,9 @@ const accountMenuOpen = ref(false)
 const activeThread = ref(null)
 const previousRecommendations = ref([])
 const chatMessages = ref([])
+const currentChatId = ref(null)
+const userInput = ref("")
+const isSendingMessage = ref(false)
 const isUploadModalOpen = ref(false)
 const isTicketUploadModalOpen = ref(false)
 const isTicketDragActive = ref(false)
@@ -34,6 +37,18 @@ const otherFiles = ref([])
 const otherFileInput = ref(null)
 const dataError = ref("")
 const isLoadingData = ref(true)
+const canSendMessage = computed(() => userInput.value.trim().length > 0 && !isSendingMessage.value)
+const messageInputRef = ref(null)
+const messagesScrollRef = ref(null)
+const messageItemsRef = ref([])
+const activeChatTitle = computed(() => {
+  const id = activeThread.value ?? currentChatId.value
+  if (!id) return ""
+  const rec = previousRecommendations.value.find((item) => item.id === id)
+  if (!rec || !rec.title) return ""
+  const title = String(rec.title).trim()
+  return title.length ? title : ""
+})
 
 const displayName = computed(() => {
   const { firstName, lastName, email } = props.user ?? {}
@@ -71,10 +86,13 @@ async function loadDashboardData() {
       return
     }
     const payload = await response.json().catch(() => ({}))
-    previousRecommendations.value = Array.isArray(payload.previousRecommendations)
-      ? payload.previousRecommendations
-      : []
+    const recs = Array.isArray(payload.previousRecommendations) ? payload.previousRecommendations : []
+    previousRecommendations.value = recs
     chatMessages.value = Array.isArray(payload.chatMessages) ? payload.chatMessages : []
+    if (recs.length > 0 && !activeThread.value) {
+      activeThread.value = recs[0].id
+      currentChatId.value = recs[0].id
+    }
   } catch (err) {
     dataError.value = "Unexpected error loading dashboard."
   } finally {
@@ -84,6 +102,11 @@ async function loadDashboardData() {
 
 onMounted(() => {
   loadDashboardData()
+  nextTick(() => {
+    if (messageInputRef.value) {
+      autoResizeMessage()
+    }
+  })
 })
 
 function toggleAccountMenu() {
@@ -119,6 +142,142 @@ async function logout() {
   } finally {
     isLoggingOut.value = false
   }
+}
+
+function autoResizeMessage() {
+  const el = messageInputRef.value
+  if (!el) return
+  const minHeight = 36
+  const maxHeight = 128
+  el.style.height = "auto"
+  const newHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight)
+  el.style.height = `${newHeight}px`
+}
+
+async function selectChat(rec) {
+  if (!rec || !rec.id) return
+  activeThread.value = rec.id
+  currentChatId.value = rec.id
+  dataError.value = ""
+  isLoadingData.value = true
+  try {
+    const response = await fetch(`/api/chat/${rec.id}/messages`, {
+      credentials: "same-origin",
+    })
+    if (!response.ok) {
+      dataError.value = "Unable to load chat messages."
+      return
+    }
+    const payload = await response.json().catch(() => ({}))
+    chatMessages.value = Array.isArray(payload.messages) ? payload.messages : []
+  } catch (err) {
+    dataError.value = "Unexpected error loading chat messages."
+  } finally {
+    isLoadingData.value = false
+  }
+}
+
+async function sendChatMessage() {
+  const text = userInput.value.trim()
+  if (!text || isSendingMessage.value) return
+
+  // Clear input immediately after sending
+  userInput.value = ""
+  nextTick(() => autoResizeMessage())
+
+  error.value = ""
+  isSendingMessage.value = true
+
+  const timestamp = new Date().toISOString()
+  const localUserMessage = {
+    id: `user-${Date.now()}`,
+    role: "user",
+    content: text,
+    timestamp,
+  }
+
+  chatMessages.value = [...chatMessages.value, localUserMessage]
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: text,
+        chatId: currentChatId.value,
+      }),
+    })
+
+    const payload = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      error.value = payload?.error ?? "Unable to get a recommendation."
+      return
+    }
+
+    if (payload && payload.message) {
+      chatMessages.value = [...chatMessages.value, payload.message]
+    }
+
+    if (!currentChatId.value && payload && payload.chatId) {
+      currentChatId.value = payload.chatId
+      activeThread.value = payload.chatId
+      previousRecommendations.value = [
+        {
+          id: payload.chatId,
+          title: payload.chatTitle || "Untitled chat",
+          subtitle: "AI travel recommendations",
+        },
+        ...previousRecommendations.value,
+      ]
+    }
+  } catch (err) {
+    error.value = "Unexpected error contacting the recommendation engine."
+  } finally {
+    isSendingMessage.value = false
+  }
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    const container = messagesScrollRef.value
+    if (container) {
+      container.scrollTop = container.scrollHeight
+      return
+    }
+
+    const items = messageItemsRef.value
+    if (items && items.length) {
+      const last = items[items.length - 1]
+      if (last && typeof last.scrollIntoView === "function") {
+        last.scrollIntoView({ behavior: "smooth", block: "end" })
+      }
+    }
+  })
+}
+
+watch(
+  chatMessages,
+  () => {
+    scrollToBottom()
+  },
+  { deep: true }
+)
+
+function formatTimestamp(raw) {
+  if (!raw) return ""
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
 }
 
 function openUploadModal() {
@@ -259,6 +418,12 @@ function removeOtherFile(index) {
       <div>
         <p class="text-xs uppercase tracking-[0.4em] text-muted-foreground">Trips</p>
         <h2 class="mt-2 font-semibold text-foreground">Previous recommendations</h2>
+        <button
+          class="mt-3 inline-flex items-center rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs font-medium text-foreground shadow-sm transition hover:bg-muted"
+          @click="() => { activeThread = null; currentChatId = null; chatMessages = []; userInput = '' }"
+        >
+          + New chat
+        </button>
       </div>
       <nav class="mt-6 flex-1 space-y-2 overflow-y-auto pr-2">
         <template v-if="isLoadingData">
@@ -270,7 +435,7 @@ function removeOtherFile(index) {
           <button
             v-for="rec in previousRecommendations"
             :key="rec.id || rec.title"
-            @click="activeThread = rec.id"
+            @click="selectChat(rec)"
             :class="[
               'w-full rounded-xl px-3 py-3 text-left transition-all',
               activeThread === rec.id
@@ -332,26 +497,22 @@ function removeOtherFile(index) {
     </aside>
 
     <main class="flex flex-1 flex-col overflow-hidden bg-background">
-      <header class="border-b border-border/60 bg-background/80 px-6 py-5 backdrop-blur lg:px-10">
+      <header
+        v-if="activeChatTitle"
+        class="border-b border-border/60 bg-background/80 px-6 py-5 backdrop-blur lg:px-10"
+      >
         <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">
-              Travel Recommendation Dashboard
-            </h1>
-            <p class="text-sm text-muted-foreground">
-              Overview of the Travel Recommendation project and generated trips.
-            </p>
-          </div>
-          <div class="flex items-center gap-2 text-xs text-muted-foreground">
-            <span class="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-500">Online</span>
-            {{ new Date().toLocaleDateString() }}
-          </div>
+          <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">
+            {{ activeChatTitle }}
+          </h1>
         </div>
-        <p v-if="dataError" class="mt-3 text-xs text-destructive">{{ dataError }}</p>
       </header>
+      <p v-if="dataError" class="px-6 pt-3 text-xs text-destructive lg:px-10">
+        {{ dataError }}
+      </p>
 
       <section class="relative flex flex-1 flex-col overflow-hidden">
-        <div class="flex-1 overflow-y-auto px-6 py-6 lg:px-10">
+        <div ref="messagesScrollRef" class="flex-1 overflow-y-auto px-6 py-6 lg:px-10">
           <div class="mx-auto w-full max-w-4xl space-y-6">
             <template v-if="isLoadingData">
               <div class="h-28 animate-pulse rounded-3xl bg-muted/50"></div>
@@ -360,8 +521,9 @@ function removeOtherFile(index) {
             <template v-else>
               <template v-if="chatMessages.length">
                 <div
-                  v-for="message in chatMessages"
-                  :key="message.id || message.timestamp"
+                  v-for="(message, index) in chatMessages"
+                  :key="message.id || message.timestamp || index"
+                  ref="messageItemsRef"
                   :class="[
                     'rounded-2xl border px-4 py-4 shadow-sm',
                     message.role === 'assistant'
@@ -371,7 +533,7 @@ function removeOtherFile(index) {
                 >
                   <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground/80">
                     {{ message.role === 'assistant' ? 'Recommendation engine' : 'You' }}
-                    <span class="ml-2 text-muted-foreground/60">{{ message.timestamp ?? '' }}</span>
+                    <span class="ml-2 text-muted-foreground/60">{{ formatTimestamp(message.timestamp) }}</span>
                   </p>
                   <div class="mt-3 space-y-3 text-sm leading-relaxed">
                     <template v-if="message.title">
@@ -389,7 +551,14 @@ function removeOtherFile(index) {
                       </ul>
                     </template>
                     <template v-else-if="message.content">
-                      <p class="text-muted-foreground">{{ message.content }}</p>
+                      <div
+                        v-if="message.role === 'assistant'"
+                        class="text-muted-foreground"
+                        v-html="message.content"
+                      ></div>
+                      <p v-else class="text-muted-foreground">
+                        {{ message.content }}
+                      </p>
                     </template>
                     <p v-if="!message.content && !Array.isArray(message.content)" class="text-muted-foreground/70">
                       No details recorded.
@@ -422,9 +591,21 @@ function removeOtherFile(index) {
               </svg>
             </Button>
             <textarea
-              class="h-20 flex-1 resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              ref="messageInputRef"
+              class="flex-1 resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              rows="1"
+              v-model="userInput"
+              placeholder="Describe your trip and what you need help with..."
+              @input="autoResizeMessage"
+              @keydown.enter.exact.prevent="sendChatMessage"
             />
-            <Button variant="outline">Coming soon</Button>
+            <Button
+              variant="outline"
+              :disabled="!canSendMessage"
+              @click="sendChatMessage"
+            >
+              {{ isSendingMessage ? "Thinking..." : "Ask AI" }}
+            </Button>
           </div>
           <p class="mt-2 text-center text-xs text-muted-foreground">
             Recommendations are indicative only—always verify travel details (flights, visas, restrictions) before booking.
