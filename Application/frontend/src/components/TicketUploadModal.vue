@@ -1,11 +1,20 @@
 <script setup>
 import { ref } from "vue"
 
-const emit = defineEmits(["close"])
+const props = defineProps({
+  chatId: {
+    type: [Number, String],
+    default: null,
+  },
+})
+
+const emit = defineEmits(["close", "uploaded"])
 
 const isTicketDragActive = ref(false)
 const ticketFiles = ref([])
 const ticketFileInput = ref(null)
+const uploadError = ref("")
+const isUploading = ref(false)
 
 function openTicketFileDialog() {
   if (ticketFileInput.value) {
@@ -37,6 +46,40 @@ function handleTicketDrop(event) {
 function removeTicketFile(index) {
   if (index < 0 || index >= ticketFiles.value.length) return
   ticketFiles.value.splice(index, 1)
+}
+
+async function submitTicket() {
+  if (!ticketFiles.value.length || isUploading.value) return
+
+  uploadError.value = ""
+  isUploading.value = true
+
+  const formData = new FormData()
+  formData.append("file", ticketFiles.value[0])
+  if (props.chatId) {
+    formData.append("chatId", props.chatId)
+  }
+
+  try {
+    const response = await fetch("/api/chat/upload-ticket", {
+      method: "POST",
+      body: formData,
+      credentials: "same-origin",
+    })
+
+    const payload = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      uploadError.value = payload?.error ?? "Unable to process ticket."
+      return
+    }
+
+    emit("uploaded", payload)
+  } catch (err) {
+    uploadError.value = "Unexpected error while uploading. Please try again."
+  } finally {
+    isUploading.value = false
+  }
 }
 </script>
 
@@ -158,6 +201,14 @@ function removeTicketFile(index) {
         </div>
       </div>
 
+      <p class="mt-3 text-[11px] text-muted-foreground">
+        The first selected file will be analyzed. Supports PDFs or images up to 10MB.
+      </p>
+
+      <p v-if="uploadError" class="mt-2 text-xs text-destructive">
+        {{ uploadError }}
+      </p>
+
       <div class="mt-5 flex items-center justify-end gap-3">
         <button
           class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
@@ -167,13 +218,12 @@ function removeTicketFile(index) {
         </button>
         <button
           class="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-          :disabled="!ticketFiles.length"
-          @click="emit('close')"
+          :disabled="!ticketFiles.length || isUploading"
+          @click="submitTicket"
         >
-          Attach ticket
+          {{ isUploading ? "Sending..." : "Analyze ticket" }}
         </button>
       </div>
     </div>
   </div>
 </template>
-

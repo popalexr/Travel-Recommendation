@@ -37,10 +37,26 @@ const otherFiles = ref([])
 const otherFileInput = ref(null)
 const dataError = ref("")
 const isLoadingData = ref(true)
+const hasCompletedUploadStep = ref(false)
+const hasStartedChat = ref(false)
+const pendingMessages = ref([])
+const ticketUploaded = ref(false)
+const accommodationUploaded = ref(false)
 const canSendMessage = computed(() => userInput.value.trim().length > 0 && !isSendingMessage.value)
 const messageInputRef = ref(null)
 const messagesScrollRef = ref(null)
 const messageItemsRef = ref([])
+const chatHasMessages = computed(() => Array.isArray(chatMessages.value) && chatMessages.value.length > 0)
+const isComposerLocked = computed(() => !hasStartedChat.value)
+const shouldShowUploadPrompt = computed(
+  () => !isLoadingData.value && !hasStartedChat.value && !chatHasMessages.value
+)
+const messagePlaceholder = computed(() =>
+  isComposerLocked.value
+    ? "Upload documents, then press Start chatting to begin..."
+    : "Describe your trip and what you need help with..."
+)
+const canStartChatting = computed(() => hasCompletedUploadStep.value || chatHasMessages.value)
 const activeChatTitle = computed(() => {
   const id = activeThread.value ?? currentChatId.value
   if (!id) return ""
@@ -89,6 +105,11 @@ async function loadDashboardData() {
     const recs = Array.isArray(payload.previousRecommendations) ? payload.previousRecommendations : []
     previousRecommendations.value = recs
     chatMessages.value = Array.isArray(payload.chatMessages) ? payload.chatMessages : []
+    hasCompletedUploadStep.value = chatMessages.value.length > 0
+    hasStartedChat.value = chatMessages.value.length > 0
+    pendingMessages.value = []
+    ticketUploaded.value = false
+    accommodationUploaded.value = false
     if (recs.length > 0 && !activeThread.value) {
       activeThread.value = recs[0].id
       currentChatId.value = recs[0].id
@@ -120,6 +141,18 @@ function closeAccountMenu() {
 function goToSettings() {
   closeAccountMenu()
   window.location.href = "/settings"
+}
+
+function startNewChat() {
+  activeThread.value = null
+  currentChatId.value = null
+  chatMessages.value = []
+  pendingMessages.value = []
+  userInput.value = ""
+  hasCompletedUploadStep.value = false
+  hasStartedChat.value = false
+  ticketUploaded.value = false
+  accommodationUploaded.value = false
 }
 
 async function logout() {
@@ -158,6 +191,8 @@ async function selectChat(rec) {
   if (!rec || !rec.id) return
   activeThread.value = rec.id
   currentChatId.value = rec.id
+  ticketUploaded.value = false
+  accommodationUploaded.value = false
   dataError.value = ""
   isLoadingData.value = true
   try {
@@ -170,6 +205,9 @@ async function selectChat(rec) {
     }
     const payload = await response.json().catch(() => ({}))
     chatMessages.value = Array.isArray(payload.messages) ? payload.messages : []
+    pendingMessages.value = []
+    hasCompletedUploadStep.value = chatMessages.value.length > 0
+    hasStartedChat.value = chatMessages.value.length > 0
   } catch (err) {
     dataError.value = "Unexpected error loading chat messages."
   } finally {
@@ -178,6 +216,8 @@ async function selectChat(rec) {
 }
 
 async function sendChatMessage() {
+  if (isComposerLocked.value) return
+
   const text = userInput.value.trim()
   if (!text || isSendingMessage.value) return
 
@@ -261,7 +301,10 @@ function scrollToBottom() {
 
 watch(
   chatMessages,
-  () => {
+  (messages) => {
+    if (Array.isArray(messages) && messages.length > 0) {
+      hasCompletedUploadStep.value = true
+    }
     scrollToBottom()
   },
   { deep: true }
@@ -278,6 +321,20 @@ function formatTimestamp(raw) {
     hour: "2-digit",
     minute: "2-digit",
   })
+}
+
+function skipUploadStep() {
+  hasCompletedUploadStep.value = true
+}
+
+function startChatting() {
+  if (hasStartedChat.value) return
+  if (!hasCompletedUploadStep.value && !chatHasMessages.value && !pendingMessages.value.length) return
+  hasStartedChat.value = true
+  if (pendingMessages.value.length) {
+    chatMessages.value = pendingMessages.value
+    pendingMessages.value = []
+  }
 }
 
 function openUploadModal() {
@@ -297,6 +354,58 @@ function closeTicketUploadModal() {
   isTicketUploadModalOpen.value = false
 }
 
+function handleTicketUploaded(payload) {
+  closeTicketUploadModal()
+  if (!payload || typeof payload !== "object") return
+
+  hasCompletedUploadStep.value = true
+  ticketUploaded.value = true
+
+  const { chatId, chatTitle, messages } = payload
+  const incomingMessages = Array.isArray(messages) ? messages : []
+  const switchingChat = Boolean(chatId && currentChatId.value && chatId !== currentChatId.value)
+
+  if (incomingMessages.length) {
+    if (hasStartedChat.value || chatHasMessages.value) {
+      if (!currentChatId.value || switchingChat) {
+        chatMessages.value = incomingMessages
+      } else {
+        chatMessages.value = [...chatMessages.value, ...incomingMessages]
+      }
+    } else {
+      const sameChat = !switchingChat && chatId && chatId === currentChatId.value
+      pendingMessages.value = sameChat
+        ? [...pendingMessages.value, ...incomingMessages]
+        : incomingMessages
+    }
+  }
+
+  if (chatId) {
+    currentChatId.value = chatId
+    activeThread.value = chatId
+  }
+
+  if (chatId) {
+    const existingIndex = previousRecommendations.value.findIndex((item) => item.id === chatId)
+    if (existingIndex >= 0) {
+      const existing = previousRecommendations.value[existingIndex]
+      previousRecommendations.value.splice(existingIndex, 1, {
+        ...existing,
+        title: chatTitle || existing.title || "Untitled chat",
+      })
+    } else {
+      previousRecommendations.value = [
+        {
+          id: chatId,
+          title: chatTitle || "Untitled chat",
+          subtitle: "AI travel recommendations",
+        },
+        ...previousRecommendations.value,
+      ]
+    }
+  }
+}
+
 function openAccommodationUploadModal() {
   isUploadModalOpen.value = false
   isAccommodationUploadModalOpen.value = true
@@ -304,6 +413,58 @@ function openAccommodationUploadModal() {
 
 function closeAccommodationUploadModal() {
   isAccommodationUploadModalOpen.value = false
+}
+
+function handleAccommodationUploaded(payload) {
+  closeAccommodationUploadModal()
+  if (!payload || typeof payload !== "object") return
+
+  hasCompletedUploadStep.value = true
+  accommodationUploaded.value = true
+
+  const { chatId, chatTitle, messages } = payload
+  const incomingMessages = Array.isArray(messages) ? messages : []
+  const switchingChat = Boolean(chatId && currentChatId.value && chatId !== currentChatId.value)
+
+  if (incomingMessages.length) {
+    if (hasStartedChat.value || chatHasMessages.value) {
+      if (!currentChatId.value || switchingChat) {
+        chatMessages.value = incomingMessages
+      } else {
+        chatMessages.value = [...chatMessages.value, ...incomingMessages]
+      }
+    } else {
+      const sameChat = !switchingChat && chatId && chatId === currentChatId.value
+      pendingMessages.value = sameChat
+        ? [...pendingMessages.value, ...incomingMessages]
+        : incomingMessages
+    }
+  }
+
+  if (chatId) {
+    currentChatId.value = chatId
+    activeThread.value = chatId
+  }
+
+  if (chatId) {
+    const existingIndex = previousRecommendations.value.findIndex((item) => item.id === chatId)
+    if (existingIndex >= 0) {
+      const existing = previousRecommendations.value[existingIndex]
+      previousRecommendations.value.splice(existingIndex, 1, {
+        ...existing,
+        title: chatTitle || existing.title || "Untitled chat",
+      })
+    } else {
+      previousRecommendations.value = [
+        {
+          id: chatId,
+          title: chatTitle || "Untitled chat",
+          subtitle: "AI travel recommendations",
+        },
+        ...previousRecommendations.value,
+      ]
+    }
+  }
 }
 
 function openOtherUploadModal() {
@@ -420,7 +581,7 @@ function removeOtherFile(index) {
         <h2 class="mt-2 font-semibold text-foreground">Previous recommendations</h2>
         <button
           class="mt-3 inline-flex items-center rounded-full border border-border/70 bg-background/80 px-3 py-1 text-xs font-medium text-foreground shadow-sm transition hover:bg-muted"
-          @click="() => { activeThread = null; currentChatId = null; chatMessages = []; userInput = '' }"
+          @click="startNewChat"
         >
           + New chat
         </button>
@@ -566,8 +727,38 @@ function removeOtherFile(index) {
                   </div>
                 </div>
               </template>
-              <div v-else class="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                No project activity yet. Once the recommendation engine generates travel suggestions, they will be summarized here.
+              <div
+                v-else-if="shouldShowUploadPrompt"
+                class="rounded-3xl border border-dashed border-border/70 bg-muted/30 px-6 py-10 text-center shadow-sm"
+              >
+                <p class="text-sm font-semibold text-foreground">Step 1 · Add your travel documents</p>
+                <p class="mt-2 text-sm text-muted-foreground">
+                  Upload tickets or invoices so the assistant understands your trip. You can skip if you don't have files yet.
+                </p>
+                <div class="mt-4 flex flex-wrap items-center justify-center gap-3">
+                  <Button variant="outline" @click="openTicketUploadModal">Upload ticket</Button>
+                  <Button variant="outline" @click="openAccommodationUploadModal">Upload invoice</Button>
+                  <Button variant="ghost" class="text-muted-foreground hover:text-foreground" @click="skipUploadStep">
+                    Skip for now
+                  </Button>
+                </div>
+                <div class="mt-8 text-sm">
+                  <p class="font-semibold text-foreground">Step 2 · Start chatting</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    Press start after you've added documents (or skipped) to begin the conversation.
+                  </p>
+                  <div class="mt-3 flex items-center justify-center">
+                    <Button :disabled="!canStartChatting" @click="startChatting">
+                      Start chatting
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <div
+                v-else
+                class="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center text-sm text-muted-foreground"
+              >
+                No project activity yet. Share your trip details or attach documents to get recommendations.
               </div>
             </template>
           </div>
@@ -595,20 +786,30 @@ function removeOtherFile(index) {
               class="flex-1 resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
               rows="1"
               v-model="userInput"
-              placeholder="Describe your trip and what you need help with..."
+              :placeholder="messagePlaceholder"
+              :disabled="isComposerLocked"
+              :class="isComposerLocked ? 'cursor-not-allowed text-muted-foreground' : ''"
               @input="autoResizeMessage"
               @keydown.enter.exact.prevent="sendChatMessage"
             />
             <Button
               variant="outline"
-              :disabled="!canSendMessage"
+              :disabled="!canSendMessage || isComposerLocked"
               @click="sendChatMessage"
             >
               {{ isSendingMessage ? "Thinking..." : "Ask AI" }}
             </Button>
           </div>
+          <p v-if="isComposerLocked" class="mt-2 text-center text-xs text-muted-foreground">
+            Add documents or skip, then press “Start chatting” to unlock the chat box.
+          </p>
+          <div v-if="isComposerLocked" class="mt-3 flex justify-center">
+            <Button size="sm" :disabled="!canStartChatting" @click="startChatting">
+              Start chatting
+            </Button>
+          </div>
           <p class="mt-2 text-center text-xs text-muted-foreground">
-            Recommendations are indicative only—always verify travel details (flights, visas, restrictions) before booking.
+            Recommendations are indicative only-always verify travel details (flights, visas, restrictions) before booking.
           </p>
           <div
             v-if="error.value"
@@ -620,6 +821,8 @@ function removeOtherFile(index) {
 
         <UploadAttachmentModal
           v-if="isUploadModalOpen"
+          :ticket-uploaded="ticketUploaded"
+          :accommodation-uploaded="accommodationUploaded"
           @close="closeUploadModal"
           @ticket="openTicketUploadModal"
           @accommodation="openAccommodationUploadModal"
@@ -1030,12 +1233,16 @@ function removeOtherFile(index) {
 
         <TicketUploadModal
           v-if="isTicketUploadModalOpen"
+          :chat-id="currentChatId"
           @close="closeTicketUploadModal"
+          @uploaded="handleTicketUploaded"
         />
 
         <AccommodationUploadModal
           v-if="isAccommodationUploadModalOpen"
+          :chat-id="currentChatId"
           @close="closeAccommodationUploadModal"
+          @uploaded="handleAccommodationUploaded"
         />
 
         <OtherUploadModal

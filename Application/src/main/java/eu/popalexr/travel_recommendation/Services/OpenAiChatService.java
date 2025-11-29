@@ -18,4 +18,16 @@ public interface OpenAiChatService {
      * based on the first user message and (optionally) the first assistant reply.
      */
     String generateTitle(String firstUserMessage, String assistantReply);
+
+    /**
+     * Reads an uploaded airplane ticket (PDF or image), extracts the travel details,
+     * and returns a concise HTML summary that can be shown inside the chat feed.
+     */
+    String analyzeTicket(List<ChatMessage> messages, String fileName, byte[] fileBytes, String contentType);
+
+    /**
+     * Reads an uploaded accommodation invoice/booking confirmation (PDF or image),
+     * extracts stay details, and returns a concise HTML summary suitable for the chat feed.
+     */
+    String analyzeAccommodation(List<ChatMessage> messages, String fileName, byte[] fileBytes, String contentType);
 }
