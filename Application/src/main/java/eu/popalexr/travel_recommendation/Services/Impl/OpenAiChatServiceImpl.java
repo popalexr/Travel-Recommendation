@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import eu.popalexr.travel_recommendation.Models.ChatMessage;
-import eu.popalexr.travel_recommendation.Services.GroqChatService;
+import eu.popalexr.travel_recommendation.Services.OpenAiChatService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -17,16 +17,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Service
-public class GroqChatServiceImpl implements GroqChatService {
+public class OpenAiChatServiceImpl implements OpenAiChatService {
 
     private final String apiKey;
     private final String model;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
-    public GroqChatServiceImpl(
-        @Value("${groq.api-key:}") String apiKey,
-        @Value("${groq.model:llama-3.3-70b-versatile}") String model,
+    public OpenAiChatServiceImpl(
+        @Value("${openai.api-key:}") String apiKey,
+        @Value("${openai.model:gpt-4o-mini}") String model,
         ObjectMapper objectMapper
     ) {
         this.apiKey = apiKey;
@@ -38,7 +38,7 @@ public class GroqChatServiceImpl implements GroqChatService {
     @Override
     public String chat(List<ChatMessage> messages) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Groq API key is not configured.");
+            throw new IllegalStateException("OpenAI API key is not configured.");
         }
 
         try {
@@ -63,14 +63,14 @@ public class GroqChatServiceImpl implements GroqChatService {
 
             return contentNode.asText();
         } catch (Exception e) {
-            throw new RuntimeException("Failed to call Groq API", e);
+            throw new RuntimeException("Failed to call OpenAI API", e);
         }
     }
 
     @Override
     public String generateTitle(String firstUserMessage, String assistantReply) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Groq API key is not configured.");
+            throw new IllegalStateException("OpenAI API key is not configured.");
         }
 
         try {
@@ -108,7 +108,7 @@ public class GroqChatServiceImpl implements GroqChatService {
             }
             return title;
         } catch (Exception e) {
-            throw new RuntimeException("Failed to generate chat title with Groq API", e);
+            throw new RuntimeException("Failed to generate chat title with OpenAI API", e);
         }
     }
 
@@ -135,7 +135,7 @@ public class GroqChatServiceImpl implements GroqChatService {
         String requestBody = objectMapper.writeValueAsString(root);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-            .uri(URI.create("https://api.groq.com/openai/v1/chat/completions"))
+            .uri(URI.create("https://api.openai.com/v1/chat/completions"))
             .header("Authorization", "Bearer " + apiKey)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
@@ -144,7 +144,9 @@ public class GroqChatServiceImpl implements GroqChatService {
         HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
         if (response.statusCode() >= 400) {
-            throw new RuntimeException("Groq API returned status " + response.statusCode());
+            String responseBody = response.body();
+            String errorDetails = responseBody == null || responseBody.isBlank() ? "" : (": " + responseBody);
+            throw new RuntimeException("OpenAI API returned status " + response.statusCode() + errorDetails);
         }
 
         JsonNode rootNode = objectMapper.readTree(response.body());

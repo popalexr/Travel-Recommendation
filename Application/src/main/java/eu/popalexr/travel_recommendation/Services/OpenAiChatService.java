@@ -4,10 +4,10 @@ import eu.popalexr.travel_recommendation.Models.ChatMessage;
 
 import java.util.List;
 
-public interface GroqChatService {
+public interface OpenAiChatService {
 
     /**
-     * Sends the given chat history to the Groq Chat Completions API
+     * Sends the given chat history to the OpenAI Chat Completions API
      * and returns the assistant reply as an HTML snippet
      * (no outer &lt;html&gt; or &lt;body&gt; tags).
      */

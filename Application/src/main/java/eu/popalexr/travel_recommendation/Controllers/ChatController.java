@@ -7,7 +7,7 @@ import eu.popalexr.travel_recommendation.Models.User;
 import eu.popalexr.travel_recommendation.Repositories.ChatMessageRepository;
 import eu.popalexr.travel_recommendation.Repositories.ChatRepository;
 import eu.popalexr.travel_recommendation.Repositories.UserRepository;
-import eu.popalexr.travel_recommendation.Services.GroqChatService;
+import eu.popalexr.travel_recommendation.Services.OpenAiChatService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,20 +24,20 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
-public class GroqChatController {
+public class ChatController {
 
-    private final GroqChatService groqChatService;
+    private final OpenAiChatService chatService;
     private final ChatRepository chatRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final UserRepository userRepository;
 
-    public GroqChatController(
-        GroqChatService groqChatService,
+    public ChatController(
+        OpenAiChatService chatService,
         ChatRepository chatRepository,
         ChatMessageRepository chatMessageRepository,
         UserRepository userRepository
     ) {
-        this.groqChatService = groqChatService;
+        this.chatService = chatService;
         this.chatRepository = chatRepository;
         this.chatMessageRepository = chatMessageRepository;
         this.userRepository = userRepository;
@@ -109,12 +109,12 @@ public class GroqChatController {
             chatMessageRepository.save(userMessage);
 
             List<ChatMessage> history = chatMessageRepository.findByChatIdOrderByIdAsc(chat.getId());
-            String reply = groqChatService.chat(history);
+            String reply = chatService.chat(history);
             ChatMessage assistantMessageEntity = ChatMessage.create(chat, "assistant", reply);
             chatMessageRepository.save(assistantMessageEntity);
 
             if (isNewChat) {
-                String title = groqChatService.generateTitle(userMessageText, reply);
+                String title = chatService.generateTitle(userMessageText, reply);
                 chat.setTitle(title);
                 chatRepository.save(chat);
             }
@@ -135,7 +135,7 @@ public class GroqChatController {
             );
         } catch (IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
-                Map.of("error", "Groq API key is not configured on the server.")
+                Map.of("error", "OpenAI API key is not configured on the server.")
             );
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(
