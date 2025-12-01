@@ -735,9 +735,39 @@ function removeOtherFile(index) {
                 <p class="mt-2 text-sm text-muted-foreground">
                   Upload tickets or invoices so the assistant understands your trip. You can skip if you don't have files yet.
                 </p>
-                <div class="mt-4 flex flex-wrap items-center justify-center gap-3">
-                  <Button variant="outline" @click="openTicketUploadModal">Upload ticket</Button>
-                  <Button variant="outline" @click="openAccommodationUploadModal">Upload invoice</Button>
+                <div class="mt-4 flex flex-wrap items-center justify-center gap-4">
+                  <div class="flex flex-col items-center gap-1">
+                    <Button variant="outline" @click="openTicketUploadModal">Upload ticket</Button>
+                    <div
+                      v-if="ticketUploaded"
+                      class="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-[2px] text-[11px] font-semibold text-green-700"
+                    >
+                      <svg viewBox="0 0 20 20" fill="currentColor" class="size-3">
+                        <path
+                          fill-rule="evenodd"
+                          d="M16.704 5.29a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0l-3.25-3.25a.75.75 0 111.06-1.06L8.9 12.44l6.72-6.72a.75.75 0 011.084.57z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                      Ticket uploaded
+                    </div>
+                  </div>
+                  <div class="flex flex-col items-center gap-1">
+                    <Button variant="outline" @click="openAccommodationUploadModal">Upload invoice</Button>
+                    <div
+                      v-if="accommodationUploaded"
+                      class="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-[2px] text-[11px] font-semibold text-green-700"
+                    >
+                      <svg viewBox="0 0 20 20" fill="currentColor" class="size-3">
+                        <path
+                          fill-rule="evenodd"
+                          d="M16.704 5.29a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0l-3.25-3.25a.75.75 0 111.06-1.06L8.9 12.44l6.72-6.72a.75.75 0 011.084.57z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                      Invoice uploaded
+                    </div>
+                  </div>
                   <Button variant="ghost" class="text-muted-foreground hover:text-foreground" @click="skipUploadStep">
                     Skip for now
                   </Button>
