@@ -17,6 +17,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  hotelLocation: {
+    type: String,
+    default: "",
+  },
   showHeader: {
     type: Boolean,
     default: true,
@@ -30,18 +34,36 @@ const geocodeCache = new Map()
 let map = null
 let markers = []
 
+function normalizeQuery(value) {
+  if (!value) return null
+  const text = String(value).replace(/\s+/g, " ").trim()
+  return text || null
+}
+
 const uniqueLocations = computed(() => {
   const seen = new Set()
   const results = []
+  const hotelValue = normalizeQuery(props.hotelLocation)
   for (const entry of props.locations || []) {
     const value = String(entry ?? "").trim()
     if (!value) continue
     const key = value.toLowerCase()
+    if (hotelValue && key === hotelValue.toLowerCase()) continue
     if (seen.has(key)) continue
     seen.add(key)
     results.push(value)
   }
   return results.slice(0, 8)
+})
+
+const normalizedHotel = computed(() => normalizeQuery(props.hotelLocation))
+
+const hotelIcon = L.icon({
+  iconUrl:
+    "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='36' viewBox='0 0 24 36'><path fill='%23dc2626' d='M12 0C6.477 0 2 4.477 2 10c0 7.732 10 26 10 26s10-18.268 10-26C22 4.477 17.523 0 12 0zm0 15a5 5 0 110-10 5 5 0 010 10z'/></svg>",
+  iconSize: [24, 36],
+  iconAnchor: [12, 36],
+  popupAnchor: [0, -32],
 })
 
 function clearMarkers() {
@@ -91,14 +113,17 @@ async function updateMarkers() {
   if (!map) return
   clearMarkers()
 
-  if (!uniqueLocations.value.length) {
+  if (!uniqueLocations.value.length && !normalizedHotel.value) {
     setMapView()
     return
   }
 
   isLoading.value = true
   try {
-    await fetchGeocodes(uniqueLocations.value)
+    const queries = normalizedHotel.value
+      ? [...uniqueLocations.value, normalizedHotel.value]
+      : [...uniqueLocations.value]
+    await fetchGeocodes(queries)
 
     uniqueLocations.value.forEach((query) => {
       const result = geocodeCache.get(query)
@@ -110,6 +135,16 @@ async function updateMarkers() {
       marker.addTo(map)
       markers.push(marker)
     })
+
+    if (normalizedHotel.value) {
+      const result = geocodeCache.get(normalizedHotel.value)
+      if (result && typeof result.lat === "number" && typeof result.lng === "number") {
+        const marker = L.marker([result.lat, result.lng], { icon: hotelIcon })
+        marker.bindPopup(result.displayName || normalizedHotel.value)
+        marker.addTo(map)
+        markers.push(marker)
+      }
+    }
     setMapView()
   } catch (err) {
     error.value = err?.message ?? "Unable to load map locations."
@@ -129,7 +164,7 @@ onMounted(() => {
   updateMarkers()
 })
 
-watch(uniqueLocations, () => {
+watch([uniqueLocations, normalizedHotel], () => {
   updateMarkers()
 })
 

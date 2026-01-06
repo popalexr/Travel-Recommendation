@@ -139,6 +139,7 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
                     + "total cost with taxes/fees, included meals (e.g., breakfast), cancellation policy, payment status, "
                     + "contact details, and special notes or restrictions. "
                     + "Respond concisely using HTML only. Use short headings and bullet lists. "
+                    + "When listing the details, use explicit labels like 'Property name:' and 'Address:'. "
                     + "If a field is missing, state 'not provided' rather than guessing.",
                 messages,
                 "Please analyze this uploaded accommodation invoice/booking confirmation and summarize the stay details and constraints in HTML.",

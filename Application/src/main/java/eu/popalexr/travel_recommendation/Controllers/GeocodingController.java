@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.popalexr.travel_recommendation.Constants.SessionConstants;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,14 +25,18 @@ import java.util.Map;
 public class GeocodingController {
 
     private static final int MAX_LOCATIONS = 8;
-    private static final String NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final String mapboxToken;
 
-    public GeocodingController(ObjectMapper objectMapper) {
+    public GeocodingController(
+        ObjectMapper objectMapper,
+        @Value("${mapbox.api-key:}") String mapboxToken
+    ) {
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newHttpClient();
+        this.mapboxToken = mapboxToken;
     }
 
     public static class GeocodeRequest {
@@ -55,6 +60,12 @@ public class GeocodingController {
         if (uid == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
                 Map.of("error", "Authentication required.")
+            );
+        }
+
+        if (mapboxToken == null || mapboxToken.isBlank()) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                Map.of("error", "Mapbox API key is not configured.")
             );
         }
 
@@ -90,15 +101,13 @@ public class GeocodingController {
     }
 
     private Map<String, Object> geocodeSingle(String query) throws Exception {
-        String url = NOMINATIM_URL
-            + "?format=json"
-            + "&limit=1"
-            + "&q=" + URLEncoder.encode(query, StandardCharsets.UTF_8);
+        String url = "https://api.mapbox.com/geocoding/v5/mapbox.places/"
+            + URLEncoder.encode(query, StandardCharsets.UTF_8)
+            + ".json?limit=1&access_token=" + URLEncoder.encode(mapboxToken, StandardCharsets.UTF_8);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .header("Accept", "application/json")
-            .header("User-Agent", "Travel-Recommendation/1.0 (contact: local-dev)")
             .GET()
             .build();
 
@@ -108,22 +117,27 @@ public class GeocodingController {
         }
 
         JsonNode root = objectMapper.readTree(response.body());
-        if (!root.isArray() || root.isEmpty()) {
+        JsonNode features = root.path("features");
+        if (!features.isArray() || features.isEmpty()) {
             return null;
         }
 
-        JsonNode first = root.get(0);
+        JsonNode first = features.get(0);
         if (first == null) {
             return null;
         }
 
-        double lat = first.path("lat").asDouble(Double.NaN);
-        double lng = first.path("lon").asDouble(Double.NaN);
+        JsonNode center = first.path("center");
+        if (!center.isArray() || center.size() < 2) {
+            return null;
+        }
+        double lng = center.get(0).asDouble(Double.NaN);
+        double lat = center.get(1).asDouble(Double.NaN);
         if (Double.isNaN(lat) || Double.isNaN(lng)) {
             return null;
         }
 
-        String displayName = first.path("display_name").asText(query);
+        String displayName = first.path("place_name").asText(query);
         return Map.of(
             "query", query,
             "lat", lat,

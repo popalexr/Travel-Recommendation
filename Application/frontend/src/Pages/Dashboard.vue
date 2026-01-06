@@ -58,6 +58,7 @@ const otherFileInput = ref(null)
 const isPreferencesModalOpen = ref(false)
 const isMapModalOpen = ref(false)
 const mapModalLocations = ref([])
+const mapModalHotel = ref("")
 const mapModalTitle = ref("Recommended locations")
 const dataError = ref("")
 const isLoadingData = ref(true)
@@ -172,6 +173,70 @@ function extractLocationsFromMessage(content) {
 
 const locationCache = new Map()
 
+function parseLabeledValue(text, labelRegex) {
+  const match = text.match(/^\s*([^:|-]+)\s*[:\-]\s*(.+)$/)
+  if (!match) return null
+  const label = match[1]?.trim()
+  if (!label || !labelRegex.test(label)) return null
+  const value = match[2]?.trim()
+  return value || null
+}
+
+function extractAccommodationLocation(messages) {
+  if (!Array.isArray(messages)) return null
+  if (typeof window === "undefined" || typeof DOMParser === "undefined") return null
+
+  let lastIndex = -1
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i]
+    if (message?.role === "user" && typeof message.content === "string") {
+      if (message.content.toLowerCase().startsWith("uploaded accommodation invoice:")) {
+        lastIndex = i
+      }
+    }
+  }
+  if (lastIndex < 0) return null
+
+  let assistant = null
+  for (let i = lastIndex + 1; i < messages.length; i += 1) {
+    const message = messages[i]
+    if (message?.role === "assistant") {
+      assistant = message
+      break
+    }
+  }
+  if (!assistant || typeof assistant.content !== "string") return null
+
+  try {
+    const doc = new DOMParser().parseFromString(assistant.content, "text/html")
+    const items = Array.from(doc.querySelectorAll("li, p"))
+      .map((item) => item.textContent)
+      .filter(Boolean)
+
+    let address = null
+    let property = null
+
+    for (const item of items) {
+      if (!address) {
+        address = parseLabeledValue(item, /address/i)
+      }
+      if (!property) {
+        property = parseLabeledValue(item, /(property|hotel|accommodation)\s*name/i)
+      }
+      if (address && property) break
+    }
+
+    if (address && property) {
+      return `${property}, ${address}`
+    }
+    return address || property || null
+  } catch (err) {
+    return null
+  }
+}
+
+const hotelLocation = computed(() => extractAccommodationLocation(chatMessages.value))
+
 function getLocationsForMessage(message) {
   if (!message || message.role !== "assistant") return []
   const key = message.id ?? message.timestamp ?? message.content
@@ -185,12 +250,14 @@ function getLocationsForMessage(message) {
 
 function openMapModal(locations) {
   mapModalLocations.value = Array.isArray(locations) ? locations : []
-  isMapModalOpen.value = mapModalLocations.value.length > 0
+  mapModalHotel.value = hotelLocation.value ?? ""
+  isMapModalOpen.value = mapModalLocations.value.length > 0 || Boolean(mapModalHotel.value)
 }
 
 function closeMapModal() {
   isMapModalOpen.value = false
   mapModalLocations.value = []
+  mapModalHotel.value = ""
   mapModalTitle.value = "Recommended locations"
 }
 
@@ -1465,7 +1532,11 @@ function removeOtherFile(index) {
             </div>
 
             <div class="mt-5">
-              <RecommendationMap :locations="mapModalLocations" :show-header="false" />
+              <RecommendationMap
+                :locations="mapModalLocations"
+                :hotel-location="mapModalHotel"
+                :show-header="false"
+              />
             </div>
           </div>
         </div>
