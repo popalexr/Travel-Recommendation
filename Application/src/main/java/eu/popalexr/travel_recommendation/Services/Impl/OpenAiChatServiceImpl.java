@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import eu.popalexr.travel_recommendation.Models.ChatMessage;
+import eu.popalexr.travel_recommendation.Models.TripProfile;
 import eu.popalexr.travel_recommendation.Services.OpenAiChatService;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -40,11 +41,11 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
     }
 
     @Override
-    public String chat(List<ChatMessage> messages) {
+    public String chat(List<ChatMessage> messages, TripProfile profile) {
         requireApiKey();
 
         try {
-            ObjectNode root = baseChatRequest();
+            ObjectNode root = baseChatRequest(profile);
             ArrayNode apiMessages = (ArrayNode) root.get("messages");
 
             appendHistory(apiMessages, messages);
@@ -150,7 +151,7 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
         }
     }
 
-    private ObjectNode baseChatRequest() {
+    private ObjectNode baseChatRequest(TripProfile profile) {
         ObjectNode root = objectMapper.createObjectNode();
         root.put("model", model);
 
@@ -161,10 +162,26 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
         systemMessage.put(
             "content",
             "You are a helpful travel recommendation assistant. "
+                + "Provide useful and accurate travel advice based on the user's inputs and preferences."
+                + "Take in consideration the ticket and the accomodation the user added."
+                + "If no relevant information is available, ask the user for more details."
+                + "Provide a structured itinerary section with day-by-day bullet points when possible, "
+                + "and summarize constraints or missing info explicitly (use 'not provided' if needed)."
+                + "Include a section titled <h2>Recommended locations</h2> with a bullet list of specific places "
+                + "(include hotel/accommodation if provided). Each bullet should include a place name "
+                + "plus city/country or address. If no locations are available, include a single bullet "
+                + "with 'not provided'."
                 + "Answer concisely and structure your reply using HTML only (no Markdown). "
                 + "Use semantic HTML elements like <p>, <ul>, <ol>, <li>, <h2>, and <strong> where appropriate. "
                 + "Return only an HTML snippet without enclosing <html> or <body> tags."
         );
+
+        String profileContext = buildProfileContext(profile);
+        if (profileContext != null) {
+            ObjectNode profileMessage = messages.addObject();
+            profileMessage.put("role", "system");
+            profileMessage.put("content", profileContext);
+        }
 
         return root;
     }
@@ -187,6 +204,57 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("OpenAI API key is not configured.");
         }
+    }
+
+    private String buildProfileContext(TripProfile profile) {
+        if (profile == null) {
+            return null;
+        }
+
+        String destination = normalize(profile.getDestination());
+        String startDate = normalize(profile.getStartDate());
+        String endDate = normalize(profile.getEndDate());
+        String budget = normalize(profile.getBudget());
+        String travelers = normalize(profile.getTravelers());
+        String interests = normalize(profile.getInterests());
+        String constraints = normalize(profile.getConstraints());
+
+        if (destination == null
+            && startDate == null
+            && endDate == null
+            && budget == null
+            && travelers == null
+            && interests == null
+            && constraints == null) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Trip profile (user-provided). Use this to personalize recommendations.\n");
+        appendProfileField(sb, "Destination", destination);
+        appendProfileField(sb, "Start date", startDate);
+        appendProfileField(sb, "End date", endDate);
+        appendProfileField(sb, "Budget", budget);
+        appendProfileField(sb, "Travelers", travelers);
+        appendProfileField(sb, "Interests", interests);
+        appendProfileField(sb, "Constraints", constraints);
+        sb.append("If a field is missing, treat it as not provided and avoid guessing.");
+        return sb.toString();
+    }
+
+    private void appendProfileField(StringBuilder sb, String label, String value) {
+        if (value == null) {
+            return;
+        }
+        sb.append(label).append(": ").append(value).append("\n");
+    }
+
+    private String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private JsonNode executeChat(ObjectNode root) throws Exception {

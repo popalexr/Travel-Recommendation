@@ -5,6 +5,8 @@ import UploadAttachmentModal from "@/components/UploadAttachmentModal.vue"
 import TicketUploadModal from "@/components/TicketUploadModal.vue"
 import AccommodationUploadModal from "@/components/AccommodationUploadModal.vue"
 import OtherUploadModal from "@/components/OtherUploadModal.vue"
+import AttachmentOptionsModal from "@/components/AttachmentOptionsModal.vue"
+import RecommendationMap from "@/components/RecommendationMap.vue"
 
 const props = defineProps({
   user: {
@@ -22,6 +24,24 @@ const chatMessages = ref([])
 const currentChatId = ref(null)
 const userInput = ref("")
 const isSendingMessage = ref(false)
+const isRegenerating = ref(false)
+const isEditingMessage = ref(false)
+const editingMessageId = ref(null)
+const editDraft = ref("")
+const isProfileLoading = ref(false)
+const isProfileSaving = ref(false)
+const profileError = ref("")
+const profileSuccess = ref("")
+const profileForm = ref({
+  destination: "",
+  startDate: "",
+  endDate: "",
+  budget: "",
+  travelers: "",
+  interests: "",
+  constraints: "",
+})
+const isActionModalOpen = ref(false)
 const isUploadModalOpen = ref(false)
 const isTicketUploadModalOpen = ref(false)
 const isTicketDragActive = ref(false)
@@ -35,6 +55,10 @@ const isOtherUploadModalOpen = ref(false)
 const isOtherDragActive = ref(false)
 const otherFiles = ref([])
 const otherFileInput = ref(null)
+const isPreferencesModalOpen = ref(false)
+const isMapModalOpen = ref(false)
+const mapModalLocations = ref([])
+const mapModalTitle = ref("Recommended locations")
 const dataError = ref("")
 const isLoadingData = ref(true)
 const hasCompletedUploadStep = ref(false)
@@ -42,7 +66,13 @@ const hasStartedChat = ref(false)
 const pendingMessages = ref([])
 const ticketUploaded = ref(false)
 const accommodationUploaded = ref(false)
-const canSendMessage = computed(() => userInput.value.trim().length > 0 && !isSendingMessage.value)
+const canSendMessage = computed(() =>
+  userInput.value.trim().length > 0
+  && !isSendingMessage.value
+  && !isRegenerating.value
+  && !isEditingMessage.value
+  && editingMessageId.value === null
+)
 const messageInputRef = ref(null)
 const messagesScrollRef = ref(null)
 const messageItemsRef = ref([])
@@ -65,6 +95,203 @@ const activeChatTitle = computed(() => {
   const title = String(rec.title).trim()
   return title.length ? title : ""
 })
+
+function isUploadMessage(content) {
+  if (!content) return false
+  const normalized = String(content).trim().toLowerCase()
+  return normalized.startsWith("uploaded airplane ticket:")
+    || normalized.startsWith("uploaded accommodation invoice:")
+}
+
+const lastUserMessage = computed(() => {
+  const messages = chatMessages.value
+  if (!Array.isArray(messages)) return null
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]
+    if (message && message.role === "user") {
+      return message
+    }
+  }
+  return null
+})
+
+const canRegenerate = computed(() => {
+  const message = lastUserMessage.value
+  if (!message || !currentChatId.value) return false
+  if (isUploadMessage(message.content)) return false
+  if (isSendingMessage.value || isRegenerating.value || isEditingMessage.value) return false
+  return true
+})
+
+function normalizeLocationText(value) {
+  if (!value) return null
+  const text = String(value).replace(/\s+/g, " ").trim()
+  if (!text) return null
+  if (text.toLowerCase().includes("not provided")) return null
+  return text
+}
+
+function extractLocationsFromMessage(content) {
+  if (!content || typeof content !== "string") return []
+  if (typeof window === "undefined" || typeof DOMParser === "undefined") return []
+
+  try {
+    const doc = new DOMParser().parseFromString(content, "text/html")
+    const headings = Array.from(doc.querySelectorAll("h1, h2, h3, strong"))
+    const heading = headings.find((node) =>
+      /recommended locations|locations/i.test(node.textContent || "")
+    )
+
+    if (!heading) {
+      return []
+    }
+
+    let items = []
+    let sibling = heading.nextElementSibling
+    while (sibling && sibling.tagName !== "UL" && sibling.tagName !== "OL") {
+      sibling = sibling.nextElementSibling
+    }
+    if (sibling) {
+      items = Array.from(sibling.querySelectorAll("li")).map((item) => item.textContent)
+    }
+
+    const seen = new Set()
+    return items
+      .map(normalizeLocationText)
+      .filter(Boolean)
+      .filter((item) => {
+        const key = item.toLowerCase()
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+  } catch (err) {
+    return []
+  }
+}
+
+const locationCache = new Map()
+
+function getLocationsForMessage(message) {
+  if (!message || message.role !== "assistant") return []
+  const key = message.id ?? message.timestamp ?? message.content
+  if (locationCache.has(key)) {
+    return locationCache.get(key)
+  }
+  const locations = extractLocationsFromMessage(message.content)
+  locationCache.set(key, locations)
+  return locations
+}
+
+function openMapModal(locations) {
+  mapModalLocations.value = Array.isArray(locations) ? locations : []
+  isMapModalOpen.value = mapModalLocations.value.length > 0
+}
+
+function closeMapModal() {
+  isMapModalOpen.value = false
+  mapModalLocations.value = []
+  mapModalTitle.value = "Recommended locations"
+}
+
+function resetProfileForm() {
+  profileForm.value = {
+    destination: "",
+    startDate: "",
+    endDate: "",
+    budget: "",
+    travelers: "",
+    interests: "",
+    constraints: "",
+  }
+}
+
+function applyProfilePayload(payload) {
+  const profile = payload ?? {}
+  profileForm.value = {
+    destination: profile.destination ?? "",
+    startDate: profile.startDate ?? "",
+    endDate: profile.endDate ?? "",
+    budget: profile.budget ?? "",
+    travelers: profile.travelers ?? "",
+    interests: profile.interests ?? "",
+    constraints: profile.constraints ?? "",
+  }
+}
+
+async function loadProfile(chatId) {
+  profileError.value = ""
+  profileSuccess.value = ""
+
+  if (!chatId) {
+    resetProfileForm()
+    return
+  }
+
+  isProfileLoading.value = true
+  try {
+    const response = await fetch(`/api/chat/${chatId}/profile`, {
+      credentials: "same-origin",
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      profileError.value = payload?.error ?? "Unable to load trip preferences."
+      resetProfileForm()
+      return
+    }
+    applyProfilePayload(payload.profile)
+  } catch (err) {
+    profileError.value = "Unexpected error loading preferences."
+    resetProfileForm()
+  } finally {
+    isProfileLoading.value = false
+  }
+}
+
+async function saveProfile() {
+  profileError.value = ""
+  profileSuccess.value = ""
+
+  if (!currentChatId.value) {
+    profileError.value = "Start a chat before saving preferences."
+    return
+  }
+
+  if (isProfileSaving.value) return
+  isProfileSaving.value = true
+
+  try {
+    const response = await fetch(`/api/chat/${currentChatId.value}/profile`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        destination: profileForm.value.destination,
+        startDate: profileForm.value.startDate,
+        endDate: profileForm.value.endDate,
+        budget: profileForm.value.budget,
+        travelers: profileForm.value.travelers,
+        interests: profileForm.value.interests,
+        constraints: profileForm.value.constraints,
+      }),
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      profileError.value = payload?.error ?? "Unable to save trip preferences."
+      return
+    }
+
+    applyProfilePayload(payload.profile)
+    profileSuccess.value = "Preferences saved."
+  } catch (err) {
+    profileError.value = "Unexpected error saving preferences."
+  } finally {
+    isProfileSaving.value = false
+  }
+}
 
 const displayName = computed(() => {
   const { firstName, lastName, email } = props.user ?? {}
@@ -110,10 +337,14 @@ async function loadDashboardData() {
     pendingMessages.value = []
     ticketUploaded.value = false
     accommodationUploaded.value = false
+    cancelEditing()
+    isRegenerating.value = false
+    isEditingMessage.value = false
     if (recs.length > 0 && !activeThread.value) {
       activeThread.value = recs[0].id
       currentChatId.value = recs[0].id
     }
+    await loadProfile(currentChatId.value)
   } catch (err) {
     dataError.value = "Unexpected error loading dashboard."
   } finally {
@@ -149,6 +380,13 @@ function startNewChat() {
   chatMessages.value = []
   pendingMessages.value = []
   userInput.value = ""
+  cancelEditing()
+  closeMapModal()
+  isRegenerating.value = false
+  isEditingMessage.value = false
+  profileError.value = ""
+  profileSuccess.value = ""
+  resetProfileForm()
   hasCompletedUploadStep.value = false
   hasStartedChat.value = false
   ticketUploaded.value = false
@@ -187,12 +425,37 @@ function autoResizeMessage() {
   el.style.height = `${newHeight}px`
 }
 
+function canEditMessage(message) {
+  if (!message || message.role !== "user") return false
+  if (!currentChatId.value) return false
+  if (typeof message.id !== "number") return false
+  if (isUploadMessage(message.content)) return false
+  if (isSendingMessage.value || isRegenerating.value || isEditingMessage.value) return false
+  const lastMessage = lastUserMessage.value
+  return Boolean(lastMessage && lastMessage.id === message.id)
+}
+
+function startEditing(message) {
+  if (!canEditMessage(message)) return
+  editingMessageId.value = message.id
+  editDraft.value = message.content ?? ""
+}
+
+function cancelEditing() {
+  editingMessageId.value = null
+  editDraft.value = ""
+}
+
 async function selectChat(rec) {
   if (!rec || !rec.id) return
   activeThread.value = rec.id
   currentChatId.value = rec.id
   ticketUploaded.value = false
   accommodationUploaded.value = false
+  cancelEditing()
+  closeMapModal()
+  isRegenerating.value = false
+  isEditingMessage.value = false
   dataError.value = ""
   isLoadingData.value = true
   try {
@@ -208,6 +471,7 @@ async function selectChat(rec) {
     pendingMessages.value = []
     hasCompletedUploadStep.value = chatMessages.value.length > 0
     hasStartedChat.value = chatMessages.value.length > 0
+    await loadProfile(rec.id)
   } catch (err) {
     dataError.value = "Unexpected error loading chat messages."
   } finally {
@@ -220,6 +484,7 @@ async function sendChatMessage() {
 
   const text = userInput.value.trim()
   if (!text || isSendingMessage.value) return
+  cancelEditing()
 
   // Clear input immediately after sending
   userInput.value = ""
@@ -258,7 +523,30 @@ async function sendChatMessage() {
       return
     }
 
-    if (payload && payload.message) {
+    if (payload && Array.isArray(payload.messages) && payload.messages.length) {
+      const updatedMessages = [...chatMessages.value]
+      const serverUser = payload.messages.find((msg) => msg.role === "user") ?? payload.messages[0]
+      const serverAssistant = payload.messages.find((msg) => msg.role === "assistant") ?? payload.message
+
+      if (serverUser) {
+        const localIndex = updatedMessages.findIndex((msg) => msg.id === localUserMessage.id)
+        const mergedUser = {
+          ...serverUser,
+          timestamp,
+        }
+        if (localIndex >= 0) {
+          updatedMessages.splice(localIndex, 1, mergedUser)
+        } else {
+          updatedMessages.push(mergedUser)
+        }
+      }
+
+      if (serverAssistant) {
+        updatedMessages.push(serverAssistant)
+      }
+
+      chatMessages.value = updatedMessages
+    } else if (payload && payload.message) {
       chatMessages.value = [...chatMessages.value, payload.message]
     }
 
@@ -278,6 +566,83 @@ async function sendChatMessage() {
     error.value = "Unexpected error contacting the recommendation engine."
   } finally {
     isSendingMessage.value = false
+  }
+}
+
+async function saveEditedMessage(message) {
+  if (!message || !currentChatId.value || isEditingMessage.value) return
+  const trimmed = editDraft.value.trim()
+  if (!trimmed) {
+    error.value = "Message cannot be empty."
+    return
+  }
+
+  error.value = ""
+  isEditingMessage.value = true
+
+  try {
+    const response = await fetch("/api/chat/edit-latest", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId: currentChatId.value,
+        messageId: message.id,
+        message: trimmed,
+      }),
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      error.value = payload?.error ?? "Unable to update the message."
+      return
+    }
+
+    if (Array.isArray(payload.messages)) {
+      chatMessages.value = payload.messages
+    }
+
+    cancelEditing()
+  } catch (err) {
+    error.value = "Unexpected error while updating the message."
+  } finally {
+    isEditingMessage.value = false
+  }
+}
+
+async function regenerateRecommendation() {
+  if (!canRegenerate.value || isRegenerating.value) return
+  error.value = ""
+  isRegenerating.value = true
+  cancelEditing()
+
+  try {
+    const response = await fetch("/api/chat/regenerate", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId: currentChatId.value,
+      }),
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      error.value = payload?.error ?? "Unable to regenerate the recommendation."
+      return
+    }
+
+    if (Array.isArray(payload.messages)) {
+      chatMessages.value = payload.messages
+    }
+  } catch (err) {
+    error.value = "Unexpected error while regenerating."
+  } finally {
+    isRegenerating.value = false
   }
 }
 
@@ -345,6 +710,39 @@ function closeUploadModal() {
   isUploadModalOpen.value = false
 }
 
+function openActionModal() {
+  isActionModalOpen.value = true
+}
+
+function closeActionModal() {
+  isActionModalOpen.value = false
+}
+
+function openPreferencesModal() {
+  isPreferencesModalOpen.value = true
+  profileError.value = ""
+  profileSuccess.value = ""
+  if (currentChatId.value) {
+    loadProfile(currentChatId.value)
+  }
+}
+
+function closePreferencesModal() {
+  isPreferencesModalOpen.value = false
+  profileError.value = ""
+  profileSuccess.value = ""
+}
+
+function handleActionUpload() {
+  closeActionModal()
+  openUploadModal()
+}
+
+function handleActionPreferences() {
+  closeActionModal()
+  openPreferencesModal()
+}
+
 function openTicketUploadModal() {
   isUploadModalOpen.value = false
   isTicketUploadModalOpen.value = true
@@ -403,6 +801,10 @@ function handleTicketUploaded(payload) {
         ...previousRecommendations.value,
       ]
     }
+  }
+
+  if (chatId) {
+    loadProfile(chatId)
   }
 }
 
@@ -464,6 +866,10 @@ function handleAccommodationUploaded(payload) {
         ...previousRecommendations.value,
       ]
     }
+  }
+
+  if (chatId) {
+    loadProfile(chatId)
   }
 }
 
@@ -692,38 +1098,80 @@ function removeOtherFile(index) {
                       : 'border-transparent bg-primary/5 text-primary'
                   ]"
                 >
-                  <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground/80">
-                    {{ message.role === 'assistant' ? 'Recommendation engine' : 'You' }}
-                    <span class="ml-2 text-muted-foreground/60">{{ formatTimestamp(message.timestamp) }}</span>
-                  </p>
+                  <div class="flex items-start justify-between gap-3">
+                    <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground/80">
+                      {{ message.role === 'assistant' ? 'Recommendation engine' : 'You' }}
+                      <span class="ml-2 text-muted-foreground/60">{{ formatTimestamp(message.timestamp) }}</span>
+                    </p>
+                    <button
+                      v-if="canEditMessage(message) && editingMessageId !== message.id"
+                      class="rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-muted-foreground transition hover:text-foreground"
+                      @click="startEditing(message)"
+                    >
+                      Edit
+                    </button>
+                  </div>
                   <div class="mt-3 space-y-3 text-sm leading-relaxed">
-                    <template v-if="message.title">
-                      <p class="text-sm font-semibold text-foreground">{{ message.title }}</p>
-                    </template>
-                    <template v-if="Array.isArray(message.content)">
-                      <ul class="space-y-3">
-                        <li
-                          v-for="(paragraph, idx) in message.content"
-                          :key="idx"
-                          class="rounded-xl bg-muted/40 px-3 py-2 text-muted-foreground"
+                    <template v-if="editingMessageId === message.id">
+                      <textarea
+                        v-model="editDraft"
+                        rows="3"
+                        class="w-full resize-none rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none"
+                      />
+                      <div class="flex items-center justify-end gap-2">
+                        <Button size="sm" variant="ghost" @click="cancelEditing">
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          :disabled="!editDraft.trim() || isEditingMessage"
+                          @click="saveEditedMessage(message)"
                         >
-                          {{ paragraph }}
-                        </li>
-                      </ul>
+                          {{ isEditingMessage ? "Saving..." : "Save & regenerate" }}
+                        </Button>
+                      </div>
                     </template>
-                    <template v-else-if="message.content">
-                      <div
-                        v-if="message.role === 'assistant'"
-                        class="text-muted-foreground"
-                        v-html="message.content"
-                      ></div>
-                      <p v-else class="text-muted-foreground">
-                        {{ message.content }}
+                    <template v-else>
+                      <template v-if="message.title">
+                        <p class="text-sm font-semibold text-foreground">{{ message.title }}</p>
+                      </template>
+                      <template v-if="Array.isArray(message.content)">
+                        <ul class="space-y-3">
+                          <li
+                            v-for="(paragraph, idx) in message.content"
+                            :key="idx"
+                            class="rounded-xl bg-muted/40 px-3 py-2 text-muted-foreground"
+                          >
+                            {{ paragraph }}
+                          </li>
+                        </ul>
+                      </template>
+                      <template v-else-if="message.content">
+                        <div
+                          v-if="message.role === 'assistant'"
+                          class="text-muted-foreground"
+                          v-html="message.content"
+                        ></div>
+                        <p v-else class="text-muted-foreground">
+                          {{ message.content }}
+                        </p>
+                        <div
+                          v-if="message.role === 'assistant' && getLocationsForMessage(message).length"
+                          class="pt-2"
+                        >
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            @click="openMapModal(getLocationsForMessage(message))"
+                          >
+                            Open map
+                          </Button>
+                        </div>
+                      </template>
+                      <p v-if="!message.content && !Array.isArray(message.content)" class="text-muted-foreground/70">
+                        No details recorded.
                       </p>
                     </template>
-                    <p v-if="!message.content && !Array.isArray(message.content)" class="text-muted-foreground/70">
-                      No details recorded.
-                    </p>
                   </div>
                 </div>
               </template>
@@ -800,7 +1248,7 @@ function removeOtherFile(index) {
               variant="outline"
               size="icon"
               class="shrink-0"
-              @click="openUploadModal"
+              @click="openActionModal"
               aria-label="Attach travel documents"
             >
               <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
@@ -829,6 +1277,13 @@ function removeOtherFile(index) {
             >
               {{ isSendingMessage ? "Thinking..." : "Ask AI" }}
             </Button>
+            <Button
+              variant="ghost"
+              :disabled="!canRegenerate"
+              @click="regenerateRecommendation"
+            >
+              {{ isRegenerating ? "Regenerating..." : "Regenerate" }}
+            </Button>
           </div>
           <p v-if="isComposerLocked" class="mt-2 text-center text-xs text-muted-foreground">
             Add documents or skip, then press “Start chatting” to unlock the chat box.
@@ -846,6 +1301,172 @@ function removeOtherFile(index) {
             class="mx-auto mt-3 w-full max-w-4xl rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
           >
             {{ error.value }}
+          </div>
+        </div>
+
+        <AttachmentOptionsModal
+          v-if="isActionModalOpen"
+          @close="closeActionModal"
+          @upload="handleActionUpload"
+          @preferences="handleActionPreferences"
+        />
+
+        <div
+          v-if="isPreferencesModalOpen"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        >
+          <div class="w-full max-w-2xl rounded-3xl border border-border bg-background p-6 shadow-2xl">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-foreground">Trip preferences</h2>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Save details to personalize the itinerary and recommendations.
+                </p>
+              </div>
+              <button
+                class="rounded-full p-1 text-muted-foreground hover:bg-muted"
+                @click="closePreferencesModal"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.22 5.22a.75.75 0 011.06 0L10 8.94l3.72-3.72a.75.75 0 111.06 1.06L11.06 10l3.72 3.72a.75.75 0 11-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 11-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 010-1.06z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div v-if="isProfileLoading" class="mt-5 space-y-3">
+              <div class="h-10 animate-pulse rounded-xl bg-muted/50"></div>
+              <div class="h-10 animate-pulse rounded-xl bg-muted/50"></div>
+              <div class="h-10 animate-pulse rounded-xl bg-muted/50"></div>
+            </div>
+
+            <div v-else class="mt-5 grid gap-4 sm:grid-cols-2">
+              <label class="space-y-1 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                Destination
+                <input
+                  v-model="profileForm.destination"
+                  :disabled="!currentChatId"
+                  class="w-full rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                  placeholder="e.g., Lisbon"
+                />
+              </label>
+              <label class="space-y-1 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                Travelers
+                <input
+                  v-model="profileForm.travelers"
+                  :disabled="!currentChatId"
+                  class="w-full rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                  placeholder="2 adults, 1 child"
+                />
+              </label>
+              <label class="space-y-1 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                Start date
+                <input
+                  v-model="profileForm.startDate"
+                  :disabled="!currentChatId"
+                  type="date"
+                  class="w-full rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </label>
+              <label class="space-y-1 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                End date
+                <input
+                  v-model="profileForm.endDate"
+                  :disabled="!currentChatId"
+                  type="date"
+                  class="w-full rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </label>
+              <label class="space-y-1 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                Budget
+                <input
+                  v-model="profileForm.budget"
+                  :disabled="!currentChatId"
+                  class="w-full rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                  placeholder="e.g., 1200 EUR"
+                />
+              </label>
+              <label class="space-y-1 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                Interests
+                <textarea
+                  v-model="profileForm.interests"
+                  :disabled="!currentChatId"
+                  rows="3"
+                  class="w-full resize-none rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                  placeholder="Food, museums, beach days"
+                ></textarea>
+              </label>
+              <label class="space-y-1 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground sm:col-span-2">
+                Constraints
+                <textarea
+                  v-model="profileForm.constraints"
+                  :disabled="!currentChatId"
+                  rows="3"
+                  class="w-full resize-none rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                  placeholder="No red-eye flights, vegetarian options, accessible transit"
+                ></textarea>
+              </label>
+            </div>
+
+            <p v-if="!currentChatId" class="mt-3 text-xs text-muted-foreground">
+              Start a chat or upload a document to save trip preferences.
+            </p>
+            <p v-if="profileError" class="mt-3 text-xs text-destructive">
+              {{ profileError }}
+            </p>
+            <p v-if="profileSuccess" class="mt-3 text-xs text-green-600">
+              {{ profileSuccess }}
+            </p>
+
+            <div class="mt-5 flex items-center justify-end gap-3">
+              <Button variant="ghost" size="sm" @click="closePreferencesModal">
+                Close
+              </Button>
+              <Button
+                size="sm"
+                :disabled="!currentChatId || isProfileSaving || isProfileLoading"
+                @click="saveProfile"
+              >
+                {{ isProfileSaving ? "Saving..." : "Save preferences" }}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="isMapModalOpen"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        >
+          <div class="w-full max-w-4xl rounded-3xl border border-border bg-background p-6 shadow-2xl">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-foreground">{{ mapModalTitle }}</h2>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Pins are based on locations mentioned in the recommendation.
+                </p>
+              </div>
+              <button
+                class="rounded-full p-1 text-muted-foreground hover:bg-muted"
+                @click="closeMapModal"
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.22 5.22a.75.75 0 011.06 0L10 8.94l3.72-3.72a.75.75 0 111.06 1.06L11.06 10l3.72 3.72a.75.75 0 11-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 11-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 010-1.06z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div class="mt-5">
+              <RecommendationMap :locations="mapModalLocations" :show-header="false" />
+            </div>
           </div>
         </div>
 

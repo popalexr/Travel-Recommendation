@@ -1,6 +1,7 @@
 package eu.popalexr.travel_recommendation.Services;
 
 import eu.popalexr.travel_recommendation.Models.ChatMessage;
+import eu.popalexr.travel_recommendation.Models.TripProfile;
 
 import java.util.List;
 
@@ -11,7 +12,7 @@ public interface OpenAiChatService {
      * and returns the assistant reply as an HTML snippet
      * (no outer &lt;html&gt; or &lt;body&gt; tags).
      */
-    String chat(List<ChatMessage> messages);
+    String chat(List<ChatMessage> messages, TripProfile profile);
 
     /**
      * Generates a short, human-readable title for a chat,
