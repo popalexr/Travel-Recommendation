@@ -1,1 +1,1 @@
-import{A as a,K as s,R as t,l as o}from"./main.js";const c={__name:"Home",props:["message"],setup(e){return(r,l)=>(o(),a("div",null,[s("h1",null,t(e.message),1)]))}};export{c as default};
+import{z as a,J as s,M as t,k as o}from"./main.js";const l={__name:"Home",props:["message"],setup(e){return(r,n)=>(o(),a("div",null,[s("h1",null,t(e.message),1)]))}};export{l as default};
