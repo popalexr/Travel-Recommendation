@@ -34,29 +34,109 @@ const geocodeCache = new Map()
 let map = null
 let markers = []
 
+const dayPalette = [
+  { fill: "#2563eb", stroke: "#1d4ed8" },
+  { fill: "#16a34a", stroke: "#15803d" },
+  { fill: "#f97316", stroke: "#ea580c" },
+  { fill: "#dc2626", stroke: "#b91c1c" },
+  { fill: "#0d9488", stroke: "#0f766e" },
+  { fill: "#f59e0b", stroke: "#d97706" },
+  { fill: "#475569", stroke: "#334155" },
+]
+const defaultMarkerColor = { fill: "#334155", stroke: "#1f2937" }
+
 function normalizeQuery(value) {
   if (!value) return null
   const text = String(value).replace(/\s+/g, " ").trim()
   return text || null
 }
 
-const uniqueLocations = computed(() => {
+function extractDayIndex(value) {
+  if (!value) return null
+  const match = String(value).match(/\d+/)
+  if (!match) return null
+  const parsed = Number.parseInt(match[0], 10)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+function getDayColor(dayIndex) {
+  if (typeof dayIndex !== "number" || Number.isNaN(dayIndex)) {
+    return defaultMarkerColor
+  }
+  const index = Math.max(dayIndex - 1, 0) % dayPalette.length
+  return dayPalette[index]
+}
+
+function normalizeLocationEntry(entry) {
+  if (entry == null) return null
+  if (typeof entry === "string") {
+    const label = entry.trim()
+    if (!label) return null
+    return {
+      label,
+      dayLabel: null,
+      dayIndex: null,
+      dayItems: [],
+    }
+  }
+  if (typeof entry !== "object") return null
+  const label = String(entry.label ?? entry.location ?? entry.name ?? "").trim()
+  if (!label) return null
+  const dayLabel = entry.dayLabel ?? entry.day ?? null
+  const dayIndex = typeof entry.dayIndex === "number"
+    ? entry.dayIndex
+    : extractDayIndex(dayLabel)
+  const dayItems = Array.isArray(entry.dayItems) ? entry.dayItems : []
+  return {
+    label,
+    dayLabel,
+    dayIndex,
+    dayItems,
+  }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+const normalizedLocations = computed(() => {
   const seen = new Set()
   const results = []
   const hotelValue = normalizeQuery(props.hotelLocation)
   for (const entry of props.locations || []) {
-    const value = String(entry ?? "").trim()
-    if (!value) continue
-    const key = value.toLowerCase()
+    const normalized = normalizeLocationEntry(entry)
+    if (!normalized) continue
+    const key = normalized.label.toLowerCase()
     if (hotelValue && key === hotelValue.toLowerCase()) continue
     if (seen.has(key)) continue
     seen.add(key)
-    results.push(value)
+    results.push(normalized)
   }
   return results.slice(0, 8)
 })
 
 const normalizedHotel = computed(() => normalizeQuery(props.hotelLocation))
+
+const dayLegend = computed(() => {
+  const seen = new Set()
+  const legend = []
+  for (const entry of normalizedLocations.value) {
+    if (!entry.dayLabel) continue
+    const key = entry.dayLabel.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    legend.push({
+      label: entry.dayLabel,
+      color: getDayColor(entry.dayIndex),
+    })
+  }
+  return legend
+})
 
 const hotelIcon = L.icon({
   iconUrl:
@@ -108,12 +188,25 @@ async function fetchGeocodes(queries) {
   })
 }
 
+function buildPopupHtml(entry, result) {
+  const title = escapeHtml(result?.displayName || entry.label)
+  const dayLabel = entry.dayLabel ? `<p style="margin:4px 0 0;"><strong>${escapeHtml(entry.dayLabel)}</strong></p>` : ""
+  let items = ""
+  if (Array.isArray(entry.dayItems) && entry.dayItems.length) {
+    const list = entry.dayItems
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .join("")
+    items = `<ul style="margin:4px 0 0 18px;padding:0;">${list}</ul>`
+  }
+  return `<div><div style="font-weight:600;">${title}</div>${dayLabel}${items}</div>`
+}
+
 async function updateMarkers() {
   error.value = ""
   if (!map) return
   clearMarkers()
 
-  if (!uniqueLocations.value.length && !normalizedHotel.value) {
+  if (!normalizedLocations.value.length && !normalizedHotel.value) {
     setMapView()
     return
   }
@@ -121,17 +214,24 @@ async function updateMarkers() {
   isLoading.value = true
   try {
     const queries = normalizedHotel.value
-      ? [...uniqueLocations.value, normalizedHotel.value]
-      : [...uniqueLocations.value]
+      ? [...normalizedLocations.value.map((entry) => entry.label), normalizedHotel.value]
+      : [...normalizedLocations.value.map((entry) => entry.label)]
     await fetchGeocodes(queries)
 
-    uniqueLocations.value.forEach((query) => {
-      const result = geocodeCache.get(query)
+    normalizedLocations.value.forEach((entry) => {
+      const result = geocodeCache.get(entry.label)
       if (!result || typeof result.lat !== "number" || typeof result.lng !== "number") {
         return
       }
-      const marker = L.marker([result.lat, result.lng])
-      marker.bindPopup(result.displayName || query)
+      const color = getDayColor(entry.dayIndex)
+      const marker = L.circleMarker([result.lat, result.lng], {
+        radius: 7,
+        color: color.stroke,
+        fillColor: color.fill,
+        fillOpacity: 0.9,
+        weight: 2,
+      })
+      marker.bindPopup(buildPopupHtml(entry, result))
       marker.addTo(map)
       markers.push(marker)
     })
@@ -164,7 +264,7 @@ onMounted(() => {
   updateMarkers()
 })
 
-watch([uniqueLocations, normalizedHotel], () => {
+watch([normalizedLocations, normalizedHotel], () => {
   updateMarkers()
 })
 
@@ -192,6 +292,17 @@ onBeforeUnmount(() => {
 
     <div :class="showHeader ? 'mt-4' : 'mt-2'" class="overflow-hidden rounded-2xl border border-border/70">
       <div ref="mapContainer" class="h-72 w-full"></div>
+    </div>
+
+    <div v-if="dayLegend.length" class="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+      <span class="font-medium text-foreground">Days:</span>
+      <span v-for="day in dayLegend" :key="day.label" class="inline-flex items-center gap-2">
+        <span
+          class="inline-flex size-2.5 rounded-full"
+          :style="{ backgroundColor: day.color.fill, border: `1px solid ${day.color.stroke}` }"
+        ></span>
+        <span>{{ day.label }}</span>
+      </span>
     </div>
 
     <p v-if="error" class="mt-3 text-xs text-destructive">

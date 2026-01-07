@@ -102,6 +102,7 @@ function isUploadMessage(content) {
   const normalized = String(content).trim().toLowerCase()
   return normalized.startsWith("uploaded airplane ticket:")
     || normalized.startsWith("uploaded accommodation invoice:")
+    || normalized.startsWith("uploaded document:")
 }
 
 const lastUserMessage = computed(() => {
@@ -132,43 +133,263 @@ function normalizeLocationText(value) {
   return text
 }
 
+function getTextLinesFromContent(content) {
+  if (!content) return []
+  const raw = String(content)
+  const withBreaks = raw
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h1|h2|h3|h4|h5|h6|ul|ol)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+
+  return withBreaks
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+}
+
 function extractLocationsFromMessage(content) {
   if (!content || typeof content !== "string") return []
-  if (typeof window === "undefined" || typeof DOMParser === "undefined") return []
+  if (typeof window === "undefined") return []
 
-  try {
-    const doc = new DOMParser().parseFromString(content, "text/html")
-    const headings = Array.from(doc.querySelectorAll("h1, h2, h3, strong"))
-    const heading = headings.find((node) =>
-      /recommended locations|locations/i.test(node.textContent || "")
-    )
+  if (typeof DOMParser !== "undefined") {
+    try {
+      const doc = new DOMParser().parseFromString(content, "text/html")
+      const headings = Array.from(doc.querySelectorAll("h1, h2, h3, strong"))
+      const heading = headings.find((node) =>
+        /recommended locations|locations/i.test(node.textContent || "")
+      )
 
-    if (!heading) {
-      return []
+      if (heading) {
+        let items = []
+        let sibling = heading.nextElementSibling
+        while (sibling && sibling.tagName !== "UL" && sibling.tagName !== "OL") {
+          sibling = sibling.nextElementSibling
+        }
+        if (sibling) {
+          items = Array.from(sibling.querySelectorAll("li")).map((item) => item.textContent)
+        }
+
+        if (items.length) {
+          const seen = new Set()
+          return items
+            .map(normalizeLocationText)
+            .filter(Boolean)
+            .filter((item) => {
+              const key = item.toLowerCase()
+              if (seen.has(key)) return false
+              seen.add(key)
+              return true
+            })
+        }
+      }
+    } catch (err) {
+      // fall through to text parsing
     }
+  }
 
-    let items = []
-    let sibling = heading.nextElementSibling
-    while (sibling && sibling.tagName !== "UL" && sibling.tagName !== "OL") {
-      sibling = sibling.nextElementSibling
-    }
-    if (sibling) {
-      items = Array.from(sibling.querySelectorAll("li")).map((item) => item.textContent)
-    }
-
-    const seen = new Set()
-    return items
-      .map(normalizeLocationText)
-      .filter(Boolean)
-      .filter((item) => {
-        const key = item.toLowerCase()
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-  } catch (err) {
+  const lines = getTextLinesFromContent(content)
+  const startIndex = lines.findIndex((line) => /^recommended locations\b/i.test(line))
+  if (startIndex < 0) {
     return []
   }
+
+  const items = []
+  for (let i = startIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (/^itinerary\b/i.test(line)) break
+    if (/^day\s*\d+/i.test(line)) break
+    const cleaned = line.replace(/^[-*]\s*/, "").trim()
+    if (cleaned) {
+      items.push(cleaned)
+    }
+  }
+
+  const seen = new Set()
+  return items
+    .map(normalizeLocationText)
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function extractDayLabel(text) {
+  const match = text.match(/\bDay\s*\d+(?:\s*\([^)]*\))?/i)
+  if (!match) return null
+  return match[0].trim()
+}
+
+function parseDayIndex(label) {
+  if (!label) return null
+  const match = String(label).match(/\d+/)
+  if (!match) return null
+  const value = Number.parseInt(match[0], 10)
+  return Number.isNaN(value) ? null : value
+}
+
+function normalizeMatchText(value) {
+  if (!value) return ""
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function extractLocationName(value) {
+  if (!value) return ""
+  const text = String(value).trim()
+  if (!text) return ""
+  const parts = text.split(" - ")
+  return parts[0] ? parts[0].trim() : text
+}
+
+function extractItineraryDaysFromMessage(content) {
+  if (!content || typeof content !== "string") return []
+  if (typeof window === "undefined") return []
+
+  const lines = getTextLinesFromContent(content)
+  if (!lines.length) {
+    return []
+  }
+
+  const itineraryIndex = lines.findIndex((line) => /^itinerary\b/i.test(line))
+  const relevantLines = itineraryIndex >= 0 ? lines.slice(itineraryIndex) : lines
+  const dayRegex = /^Day\s*\d+(?:\s*\([^)]*\))?\s*[:\-]?/i
+
+  const days = []
+  let currentDay = null
+
+  const ensureDay = (label) => {
+    if (!label) return null
+    const existing = days.find((day) => day.dayLabel.toLowerCase() === label.toLowerCase())
+    if (existing) {
+      return existing
+    }
+    const day = {
+      dayLabel: label,
+      dayIndex: parseDayIndex(label),
+      items: [],
+    }
+    days.push(day)
+    return day
+  }
+
+  for (const line of relevantLines) {
+    if (!line) continue
+    if (/^itinerary\b/i.test(line) && !dayRegex.test(line)) continue
+    if (/^recommended locations\b/i.test(line)) {
+      if (currentDay) break
+      continue
+    }
+
+    const segments = dayRegex.test(line)
+      ? line.split(/(?=Day\s*\d+)/i).map((segment) => segment.trim()).filter(Boolean)
+      : [line]
+
+    for (const segment of segments) {
+      const match = segment.match(dayRegex)
+      if (match) {
+        const label = extractDayLabel(segment)
+        currentDay = ensureDay(label)
+        const remainder = segment.slice(match[0].length).trim()
+        if (remainder) {
+          currentDay.items.push(remainder)
+        }
+        continue
+      }
+
+      if (currentDay) {
+        currentDay.items.push(segment)
+      }
+    }
+  }
+
+  return days.filter((day) => day.items.length > 0)
+}
+
+function normalizeItineraryDays(rawDays) {
+  if (!Array.isArray(rawDays)) return []
+  return rawDays
+    .map((day) => {
+      if (!day || typeof day !== "object") return null
+      const dayLabel = String(day.dayLabel ?? day.label ?? day.day ?? "").trim()
+      if (!dayLabel) return null
+      const dayIndex = typeof day.dayIndex === "number" ? day.dayIndex : parseDayIndex(dayLabel)
+      const items = Array.isArray(day.items) ? day.items.map((item) => String(item).trim()).filter(Boolean) : []
+      return { dayLabel, dayIndex, items }
+    })
+    .filter(Boolean)
+}
+
+function parseItineraryPayload(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload)) {
+    return normalizeItineraryDays(payload)
+  }
+  if (typeof payload === "object") {
+    return normalizeItineraryDays(payload.days ?? payload.itinerary ?? [])
+  }
+  if (typeof payload === "string") {
+    try {
+      const parsed = JSON.parse(payload)
+      return parseItineraryPayload(parsed)
+    } catch (err) {
+      return []
+    }
+  }
+  return []
+}
+
+function buildLocationSchedule(locations, itineraryDays) {
+  if (!Array.isArray(locations) || !locations.length) return []
+  if (!Array.isArray(itineraryDays) || !itineraryDays.length) {
+    return locations.map((location) => ({
+      label: location,
+      dayLabel: null,
+      dayIndex: null,
+      dayItems: [],
+    }))
+  }
+
+  return locations.map((location) => {
+    const label = String(location ?? "").trim()
+    const nameMatch = normalizeMatchText(extractLocationName(label))
+    const fullMatch = normalizeMatchText(label)
+    let matchedDay = null
+
+    for (const day of itineraryDays) {
+      const items = Array.isArray(day.items) ? day.items : []
+      const hit = items.some((item) => {
+        const normalized = normalizeMatchText(item)
+        if (!normalized) return false
+        if (nameMatch && normalized.includes(nameMatch)) return true
+        if (fullMatch && normalized.includes(fullMatch)) return true
+        return false
+      })
+      if (hit) {
+        matchedDay = day
+        break
+      }
+    }
+
+    return {
+      label,
+      dayLabel: matchedDay?.dayLabel ?? null,
+      dayIndex: matchedDay?.dayIndex ?? null,
+      dayItems: matchedDay?.items ?? [],
+    }
+  })
 }
 
 const locationCache = new Map()
@@ -244,8 +465,12 @@ function getLocationsForMessage(message) {
     return locationCache.get(key)
   }
   const locations = extractLocationsFromMessage(message.content)
-  locationCache.set(key, locations)
-  return locations
+  const itinerary = message.itinerary
+    ? parseItineraryPayload(message.itinerary)
+    : extractItineraryDaysFromMessage(message.content)
+  const scheduled = buildLocationSchedule(locations, itinerary)
+  locationCache.set(key, scheduled)
+  return scheduled
 }
 
 function openMapModal(locations) {
@@ -825,6 +1050,61 @@ function handleTicketUploaded(payload) {
 
   hasCompletedUploadStep.value = true
   ticketUploaded.value = true
+
+  const { chatId, chatTitle, messages } = payload
+  const incomingMessages = Array.isArray(messages) ? messages : []
+  const switchingChat = Boolean(chatId && currentChatId.value && chatId !== currentChatId.value)
+
+  if (incomingMessages.length) {
+    if (hasStartedChat.value || chatHasMessages.value) {
+      if (!currentChatId.value || switchingChat) {
+        chatMessages.value = incomingMessages
+      } else {
+        chatMessages.value = [...chatMessages.value, ...incomingMessages]
+      }
+    } else {
+      const sameChat = !switchingChat && chatId && chatId === currentChatId.value
+      pendingMessages.value = sameChat
+        ? [...pendingMessages.value, ...incomingMessages]
+        : incomingMessages
+    }
+  }
+
+  if (chatId) {
+    currentChatId.value = chatId
+    activeThread.value = chatId
+  }
+
+  if (chatId) {
+    const existingIndex = previousRecommendations.value.findIndex((item) => item.id === chatId)
+    if (existingIndex >= 0) {
+      const existing = previousRecommendations.value[existingIndex]
+      previousRecommendations.value.splice(existingIndex, 1, {
+        ...existing,
+        title: chatTitle || existing.title || "Untitled chat",
+      })
+    } else {
+      previousRecommendations.value = [
+        {
+          id: chatId,
+          title: chatTitle || "Untitled chat",
+          subtitle: "AI travel recommendations",
+        },
+        ...previousRecommendations.value,
+      ]
+    }
+  }
+
+  if (chatId) {
+    loadProfile(chatId)
+  }
+}
+
+function handleOtherUploaded(payload) {
+  closeOtherUploadModal()
+  if (!payload || typeof payload !== "object") return
+
+  hasCompletedUploadStep.value = true
 
   const { chatId, chatTitle, messages } = payload
   const incomingMessages = Array.isArray(messages) ? messages : []
@@ -1969,7 +2249,9 @@ function removeOtherFile(index) {
 
         <OtherUploadModal
           v-if="isOtherUploadModalOpen"
+          :chat-id="currentChatId"
           @close="closeOtherUploadModal"
+          @uploaded="handleOtherUploaded"
         />
       </section>
     </main>

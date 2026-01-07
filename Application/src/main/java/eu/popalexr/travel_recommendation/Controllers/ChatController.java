@@ -169,6 +169,7 @@ public class ChatController {
             TripProfile profile = tripProfileRepository.findByChatId(chat.getId()).orElse(null);
             String reply = stripCodeFences(chatService.chat(history, profile));
             ChatMessage assistantMessageEntity = ChatMessage.create(chat, "assistant", reply);
+            assistantMessageEntity.setItineraryJson(chatService.extractItineraryJson(reply));
             chatMessageRepository.save(assistantMessageEntity);
 
             if (isNewChat) {
@@ -275,19 +276,8 @@ public class ChatController {
                 chatRepository.save(chat);
             }
 
-            Map<String, Object> userDto = Map.of(
-                "id", userMessage.getId(),
-                "role", "user",
-                "content", userMessageText,
-                "timestamp", OffsetDateTime.now().toString()
-            );
-
-            Map<String, Object> assistantDto = Map.of(
-                "id", assistantMessageEntity.getId(),
-                "role", "assistant",
-                "content", assistantMessageEntity.getText(),
-                "timestamp", OffsetDateTime.now().toString()
-            );
+            Map<String, Object> userDto = messageDto(userMessage);
+            Map<String, Object> assistantDto = messageDto(assistantMessageEntity);
 
             return ResponseEntity.ok(
                 Map.of(
@@ -383,19 +373,8 @@ public class ChatController {
                 chatRepository.save(chat);
             }
 
-            Map<String, Object> userDto = Map.of(
-                "id", userMessage.getId(),
-                "role", "user",
-                "content", userMessageText,
-                "timestamp", OffsetDateTime.now().toString()
-            );
-
-            Map<String, Object> assistantDto = Map.of(
-                "id", assistantMessageEntity.getId(),
-                "role", "assistant",
-                "content", assistantMessageEntity.getText(),
-                "timestamp", OffsetDateTime.now().toString()
-            );
+            Map<String, Object> userDto = messageDto(userMessage);
+            Map<String, Object> assistantDto = messageDto(assistantMessageEntity);
 
             return ResponseEntity.ok(
                 Map.of(
@@ -411,6 +390,103 @@ public class ChatController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(
                 Map.of("error", "Failed to process the accommodation document. Please try again.")
+            );
+        }
+    }
+
+    @PostMapping(value = "/api/chat/upload-document", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> uploadDocument(
+        @RequestParam(value = "chatId", required = false) Long chatId,
+        @RequestPart("file") MultipartFile file,
+        HttpServletRequest httpRequest
+    ) {
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body(
+                Map.of("error", "A document file is required.")
+            );
+        }
+
+        String contentType = file.getContentType();
+        boolean supported = contentType != null
+            && (contentType.startsWith("image/") || contentType.equalsIgnoreCase("application/pdf"));
+        if (!supported) {
+            return ResponseEntity.badRequest().body(
+                Map.of("error", "Only PDF or image files are supported.")
+            );
+        }
+
+        final long maxSizeBytes = 10 * 1024 * 1024; // 10MB
+        if (file.getSize() > maxSizeBytes) {
+            return ResponseEntity.badRequest().body(
+                Map.of("error", "File too large. Please upload files up to 10MB.")
+            );
+        }
+
+        Object uid = httpRequest.getAttribute(SessionConstants.AUTHENTICATED_USER_ID);
+        if (!(uid instanceof Long userId)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                Map.of("error", "Authentication required.")
+            );
+        }
+
+        try {
+            Optional<User> userOpt = userRepository.findById(userId);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    Map.of("error", "User not found.")
+                );
+            }
+            User user = userOpt.get();
+
+            Chat chat;
+            boolean isNewChat = chatId == null;
+
+            if (isNewChat) {
+                chat = Chat.create(user, null);
+                chat = chatRepository.save(chat);
+            } else {
+                chat = chatRepository.findByIdAndUserId(chatId, userId).orElse(null);
+                if (chat == null) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                        Map.of("error", "Chat not found.")
+                    );
+                }
+            }
+
+            String fileName = file.getOriginalFilename() == null ? "document" : file.getOriginalFilename();
+            String userMessageText = "Uploaded document: " + fileName;
+            ChatMessage userMessage = ChatMessage.create(chat, "user", userMessageText);
+            chatMessageRepository.save(userMessage);
+
+            List<ChatMessage> history = chatMessageRepository.findByChatIdOrderByIdAsc(chat.getId());
+            String reply = chatService.analyzeOtherDocument(history, fileName, file.getBytes(), contentType);
+            String cleanedReply = stripCodeFences(reply);
+            ChatMessage assistantMessageEntity = ChatMessage.create(chat, "assistant", cleanedReply);
+            chatMessageRepository.save(assistantMessageEntity);
+
+            if (isNewChat) {
+                String title = chatService.generateTitle(userMessageText, reply);
+                chat.setTitle(title);
+                chatRepository.save(chat);
+            }
+
+            Map<String, Object> userDto = messageDto(userMessage);
+            Map<String, Object> assistantDto = messageDto(assistantMessageEntity);
+
+            return ResponseEntity.ok(
+                Map.of(
+                    "chatId", chat.getId(),
+                    "chatTitle", chat.getTitle(),
+                    "messages", List.of(userDto, assistantDto)
+                )
+            );
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                Map.of("error", "OpenAI API key is not configured on the server.")
+            );
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(
+                Map.of("error", "Failed to process the document. Please try again.")
             );
         }
     }
@@ -475,6 +551,7 @@ public class ChatController {
             TripProfile profile = tripProfileRepository.findByChatId(chat.getId()).orElse(null);
             String reply = stripCodeFences(chatService.chat(regenHistory, profile));
             ChatMessage assistantMessageEntity = ChatMessage.create(chat, "assistant", reply);
+            assistantMessageEntity.setItineraryJson(chatService.extractItineraryJson(reply));
             chatMessageRepository.save(assistantMessageEntity);
 
             List<ChatMessage> updated = chatMessageRepository.findByChatIdOrderByIdAsc(chat.getId());
@@ -542,6 +619,7 @@ public class ChatController {
             TripProfile profile = tripProfileRepository.findByChatId(chat.getId()).orElse(null);
             String reply = stripCodeFences(chatService.chat(regenHistory, profile));
             ChatMessage assistantMessageEntity = ChatMessage.create(chat, "assistant", reply);
+            assistantMessageEntity.setItineraryJson(chatService.extractItineraryJson(reply));
             chatMessageRepository.save(assistantMessageEntity);
 
             List<ChatMessage> updated = chatMessageRepository.findByChatIdOrderByIdAsc(chat.getId());
@@ -583,14 +661,7 @@ public class ChatController {
 
         List<ChatMessage> messages = chatMessageRepository.findByChatIdOrderByIdAsc(chatId);
         List<Map<String, Object>> dto = messages.stream()
-            .map(msg -> Map.<String, Object>of(
-                "id", msg.getId(),
-                "role", msg.getRole(),
-                "content", "assistant".equals(msg.getRole())
-                    ? stripCodeFences(msg.getText())
-                    : msg.getText(),
-                "timestamp", ""
-            ))
+            .map(this::messageDto)
             .collect(Collectors.toList());
 
         return ResponseEntity.ok(Map.of("messages", dto));
@@ -610,12 +681,15 @@ public class ChatController {
         if ("assistant".equals(message.getRole())) {
             content = stripCodeFences(content);
         }
-        return Map.of(
-            "id", message.getId(),
-            "role", message.getRole(),
-            "content", content,
-            "timestamp", ""
-        );
+        Map<String, Object> dto = new java.util.HashMap<>();
+        dto.put("id", message.getId());
+        dto.put("role", message.getRole());
+        dto.put("content", content);
+        dto.put("timestamp", "");
+        if (message.getItineraryJson() != null && !message.getItineraryJson().isBlank()) {
+            dto.put("itinerary", message.getItineraryJson());
+        }
+        return dto;
     }
 
     private int findLastUserMessageIndex(List<ChatMessage> messages) {
@@ -649,7 +723,8 @@ public class ChatController {
         }
         String normalized = text.trim().toLowerCase();
         return normalized.startsWith("uploaded airplane ticket:")
-            || normalized.startsWith("uploaded accommodation invoice:");
+            || normalized.startsWith("uploaded accommodation invoice:")
+            || normalized.startsWith("uploaded document:");
     }
 
     private String stripCodeFences(String content) {

@@ -21,6 +21,10 @@ public class ChatMessage {
     @Column(name = "text", nullable = false, columnDefinition = "LONGTEXT")
     private String text;
 
+    @Lob
+    @Column(name = "itinerary_json", columnDefinition = "LONGTEXT")
+    private String itineraryJson;
+
     protected ChatMessage() {
         // for JPA
     }
@@ -53,5 +57,13 @@ public class ChatMessage {
 
     public void setText(String text) {
         this.text = text;
+    }
+
+    public String getItineraryJson() {
+        return itineraryJson;
+    }
+
+    public void setItineraryJson(String itineraryJson) {
+        this.itineraryJson = itineraryJson;
     }
 }

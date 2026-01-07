@@ -31,4 +31,16 @@ public interface OpenAiChatService {
      * extracts stay details, and returns a concise HTML summary suitable for the chat feed.
      */
     String analyzeAccommodation(List<ChatMessage> messages, String fileName, byte[] fileBytes, String contentType);
+
+    /**
+     * Reads an uploaded travel-related document (PDF or image),
+     * extracts relevant details, and returns a concise HTML summary suitable for the chat feed.
+     */
+    String analyzeOtherDocument(List<ChatMessage> messages, String fileName, byte[] fileBytes, String contentType);
+
+    /**
+     * Extracts itinerary day data from an assistant response and returns JSON (string).
+     * Returns null if the extraction fails or no itinerary exists.
+     */
+    String extractItineraryJson(String assistantResponse);
 }

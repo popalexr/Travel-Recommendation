@@ -164,7 +164,7 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
             "content",
             "You are a helpful travel recommendation assistant. "
                 + "Provide useful and accurate travel advice based on the user's inputs and preferences."
-                + "Take in consideration the ticket and the accomodation the user added."
+                + "Take in consideration the ticket, the accomodation, and other documents the user added."
                 + "If no relevant information is available, ask the user for more details."
                 + "Provide a structured itinerary section with day-by-day bullet points when possible, "
                 + "and summarize constraints or missing info explicitly (use 'not provided' if needed)."
@@ -172,6 +172,7 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
                 + "(include hotel/accommodation if provided). Each bullet should include a place name "
                 + "plus city/country or address. If no locations are available, include a single bullet "
                 + "with 'not provided'."
+                + "If not mentioned otherwise, sort the recommended locations by time and create a visiting schedule."
                 + "Answer concisely and structure your reply using HTML only (no Markdown). "
                 + "Use semantic HTML elements like <p>, <ul>, <ol>, <li>, <h2>, and <strong> where appropriate. "
                 + "Return only an HTML snippet without enclosing <html> or <body> tags."
@@ -204,6 +205,82 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
     private void requireApiKey() {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("OpenAI API key is not configured.");
+        }
+    }
+
+    @Override
+    public String analyzeOtherDocument(List<ChatMessage> messages, String fileName, byte[] fileBytes, String contentType) {
+        requireApiKey();
+
+        try {
+            String safeName = (fileName == null || fileName.isBlank()) ? "document" : fileName;
+            return analyzeDocument(
+                "You are a travel assistant that reads miscellaneous travel documents (itineraries, "
+                    + "insurance policies, visa confirmations, car rentals, activity bookings, mails, and receipts). "
+                    + "Extract structured details: document type, traveler names, booking/reference numbers, "
+                    + "dates/times, locations, costs and currency, policies or restrictions, and important notes. "
+                    + "Respond concisely using HTML only. Use short headings and bullet lists. "
+                    + "If a field is missing, state 'not provided' rather than guessing.",
+                messages,
+                "Please analyze this uploaded travel document and summarize the details and constraints in HTML. "
+                    + "File name: " + safeName + ".",
+                "Document PDF text (truncated):\n",
+                contentType,
+                fileBytes
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to analyze document with OpenAI API", e);
+        }
+    }
+
+    @Override
+    public String extractItineraryJson(String assistantResponse) {
+        if (assistantResponse == null || assistantResponse.isBlank()) {
+            return null;
+        }
+        if (apiKey == null || apiKey.isBlank()) {
+            return null;
+        }
+
+        try {
+            ObjectNode root = objectMapper.createObjectNode();
+            root.put("model", model);
+
+            ArrayNode messages = root.putArray("messages");
+
+            ObjectNode systemMessage = messages.addObject();
+            systemMessage.put("role", "system");
+            systemMessage.put(
+                "content",
+                "Extract itinerary days from the assistant response. "
+                    + "Return ONLY strict JSON in this shape: "
+                    + "{\"days\":[{\"dayLabel\":\"Day 1 (25 November 2025)\",\"date\":\"25 November 2025\","
+                    + "\"items\":[\"Arrive in London\",\"Visit the Tower of London\"]}]} "
+                    + "If no itinerary exists, return {\"days\":[]}."
+            );
+
+            ObjectNode userMessage = messages.addObject();
+            userMessage.put("role", "user");
+            userMessage.put("content", "Assistant response:\n" + assistantResponse);
+
+            JsonNode contentNode = executeChat(root);
+            if (contentNode == null || contentNode.isNull()) {
+                return null;
+            }
+
+            String content = stripCodeFences(contentNode.asText());
+            if (content == null || content.isBlank()) {
+                return null;
+            }
+
+            JsonNode jsonNode = objectMapper.readTree(content);
+            JsonNode daysNode = jsonNode.path("days");
+            if (daysNode.isArray() && daysNode.isEmpty()) {
+                return null;
+            }
+            return objectMapper.writeValueAsString(jsonNode);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -356,5 +433,20 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
         } catch (IOException e) {
             return "Unable to extract text from PDF. Please rely on the image or provide key details manually.";
         }
+    }
+
+    private String stripCodeFences(String content) {
+        if (content == null) {
+            return null;
+        }
+        String trimmed = content.trim();
+        if (trimmed.startsWith("```") && trimmed.endsWith("```")) {
+            String inner = trimmed.substring(3, trimmed.length() - 3).trim();
+            if (inner.startsWith("json")) {
+                inner = inner.substring(4).trim();
+            }
+            return inner;
+        }
+        return content;
     }
 }

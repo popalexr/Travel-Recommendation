@@ -1,11 +1,20 @@
 <script setup>
 import { ref } from "vue"
 
-const emit = defineEmits(["close"])
+const props = defineProps({
+  chatId: {
+    type: [Number, String],
+    default: null,
+  },
+})
+
+const emit = defineEmits(["close", "uploaded"])
 
 const isOtherDragActive = ref(false)
 const otherFiles = ref([])
 const otherFileInput = ref(null)
+const uploadError = ref("")
+const isUploading = ref(false)
 
 function openOtherFileDialog() {
   if (otherFileInput.value) {
@@ -37,6 +46,39 @@ function handleOtherDrop(event) {
 function removeOtherFile(index) {
   if (index < 0 || index >= otherFiles.value.length) return
   otherFiles.value.splice(index, 1)
+}
+
+async function submitOtherDocument() {
+  if (!otherFiles.value.length || isUploading.value) return
+
+  uploadError.value = ""
+  isUploading.value = true
+
+  const formData = new FormData()
+  formData.append("file", otherFiles.value[0])
+  if (props.chatId) {
+    formData.append("chatId", props.chatId)
+  }
+
+  try {
+    const response = await fetch("/api/chat/upload-document", {
+      method: "POST",
+      body: formData,
+      credentials: "same-origin",
+    })
+
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      uploadError.value = payload?.error ?? "Unable to process document."
+      return
+    }
+
+    emit("uploaded", payload)
+  } catch (err) {
+    uploadError.value = "Unexpected error while uploading. Please try again."
+  } finally {
+    isUploading.value = false
+  }
 }
 </script>
 
@@ -158,6 +200,14 @@ function removeOtherFile(index) {
         </div>
       </div>
 
+      <p class="mt-3 text-[11px] text-muted-foreground">
+        The first selected file will be analyzed. Supports PDFs or images up to 10MB.
+      </p>
+
+      <p v-if="uploadError" class="mt-2 text-xs text-destructive">
+        {{ uploadError }}
+      </p>
+
       <div class="mt-5 flex items-center justify-end gap-3">
         <button
           class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
@@ -167,13 +217,12 @@ function removeOtherFile(index) {
         </button>
         <button
           class="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-          :disabled="!otherFiles.length"
-          @click="emit('close')"
+          :disabled="!otherFiles.length || isUploading"
+          @click="submitOtherDocument"
         >
-          Attach document
+          {{ isUploading ? "Sending..." : "Analyze document" }}
         </button>
       </div>
     </div>
   </div>
 </template>
-

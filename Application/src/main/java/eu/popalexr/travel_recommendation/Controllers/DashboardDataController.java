@@ -56,12 +56,20 @@ public class DashboardDataController {
             Chat latest = chats.getFirst();
             List<ChatMessage> messages = chatMessageRepository.findByChatIdOrderByIdAsc(latest.getId());
             chatMessages = messages.stream()
-                .map(msg -> Map.<String, Object>of(
-                    "id", msg.getId(),
-                    "role", msg.getRole(),
-                    "content", msg.getText(),
-                    "timestamp", ""
-                ))
+                .map(msg -> {
+                    Map<String, Object> dto = new java.util.HashMap<>();
+                    String content = "assistant".equals(msg.getRole())
+                        ? stripCodeFences(msg.getText())
+                        : msg.getText();
+                    dto.put("id", msg.getId());
+                    dto.put("role", msg.getRole());
+                    dto.put("content", content);
+                    dto.put("timestamp", "");
+                    if (msg.getItineraryJson() != null && !msg.getItineraryJson().isBlank()) {
+                        dto.put("itinerary", msg.getItineraryJson());
+                    }
+                    return dto;
+                })
                 .collect(Collectors.toList());
         }
 
@@ -71,5 +79,20 @@ public class DashboardDataController {
                 "chatMessages", chatMessages
             )
         );
+    }
+
+    private String stripCodeFences(String content) {
+        if (content == null) {
+            return null;
+        }
+        String trimmed = content.trim();
+        if (trimmed.startsWith("```") && trimmed.endsWith("```")) {
+            String inner = trimmed.substring(3, trimmed.length() - 3).trim();
+            if (inner.startsWith("html")) {
+                inner = inner.substring(4).trim();
+            }
+            return inner;
+        }
+        return content;
     }
 }
