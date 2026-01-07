@@ -1788,7 +1788,7 @@ function removeOtherFile(index) {
           v-if="isMapModalOpen"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
         >
-          <div class="w-full max-w-4xl rounded-3xl border border-border bg-background p-6 shadow-2xl">
+          <div class="w-full max-w-5xl rounded-3xl border border-border bg-background p-6 shadow-2xl">
             <div class="flex items-start justify-between gap-3">
               <div>
                 <h2 class="text-base font-semibold text-foreground">{{ mapModalTitle }}</h2>

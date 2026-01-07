@@ -291,7 +291,7 @@ onBeforeUnmount(() => {
     <p v-else-if="isLoading" class="text-xs text-muted-foreground">Loading map...</p>
 
     <div :class="showHeader ? 'mt-4' : 'mt-2'" class="overflow-hidden rounded-2xl border border-border/70">
-      <div ref="mapContainer" class="h-72 w-full"></div>
+      <div ref="mapContainer" class="h-[50vh] w-full"></div>
     </div>
 
     <div v-if="dayLegend.length" class="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
