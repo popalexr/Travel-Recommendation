@@ -32,12 +32,13 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
     public OpenAiChatServiceImpl(
         @Value("${openai.api-key:}") String apiKey,
         @Value("${openai.model:gpt-4o-mini}") String model,
-        ObjectMapper objectMapper
+        ObjectMapper objectMapper,
+        HttpClient httpClient
     ) {
         this.apiKey = apiKey;
         this.model = model;
         this.objectMapper = objectMapper;
-        this.httpClient = HttpClient.newHttpClient();
+        this.httpClient = httpClient;
     }
 
     @Override
