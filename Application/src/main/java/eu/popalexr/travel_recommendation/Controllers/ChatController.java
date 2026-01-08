@@ -173,7 +173,12 @@ public class ChatController {
             chatMessageRepository.save(assistantMessageEntity);
 
             if (isNewChat) {
-                String title = chatService.generateTitle(userMessageText, reply);
+                String title = "New travel chat";
+                try {
+                    title = chatService.generateTitle(userMessageText, reply);
+                } catch (Exception ignored) {
+                    // Title generation should not block delivering recommendations.
+                }
                 chat.setTitle(title);
                 chatRepository.save(chat);
             }
@@ -271,7 +276,12 @@ public class ChatController {
             chatMessageRepository.save(assistantMessageEntity);
 
             if (isNewChat) {
-                String title = chatService.generateTitle(userMessageText, reply);
+                String title = "New travel chat";
+                try {
+                    title = chatService.generateTitle(userMessageText, reply);
+                } catch (Exception ignored) {
+                    // Title generation should not block document analysis.
+                }
                 chat.setTitle(title);
                 chatRepository.save(chat);
             }
@@ -368,7 +378,12 @@ public class ChatController {
             chatMessageRepository.save(assistantMessageEntity);
 
             if (isNewChat) {
-                String title = chatService.generateTitle(userMessageText, reply);
+                String title = "New travel chat";
+                try {
+                    title = chatService.generateTitle(userMessageText, reply);
+                } catch (Exception ignored) {
+                    // Title generation should not block document analysis.
+                }
                 chat.setTitle(title);
                 chatRepository.save(chat);
             }
@@ -465,7 +480,12 @@ public class ChatController {
             chatMessageRepository.save(assistantMessageEntity);
 
             if (isNewChat) {
-                String title = chatService.generateTitle(userMessageText, reply);
+                String title = "New travel chat";
+                try {
+                    title = chatService.generateTitle(userMessageText, reply);
+                } catch (Exception ignored) {
+                    // Title generation should not block document analysis.
+                }
                 chat.setTitle(title);
                 chatRepository.save(chat);
             }

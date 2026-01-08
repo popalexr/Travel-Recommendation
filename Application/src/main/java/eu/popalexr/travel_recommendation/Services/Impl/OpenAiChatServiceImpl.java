@@ -156,6 +156,9 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
     private ObjectNode baseChatRequest(TripProfile profile) {
         ObjectNode root = objectMapper.createObjectNode();
         root.put("model", model);
+        ArrayNode tools = root.putArray("tools");
+        tools.addObject().put("type", "web_search");
+        root.put("tool_choice", "required");
 
         ArrayNode messages = root.putArray("messages");
 
@@ -164,16 +167,17 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
         systemMessage.put(
             "content",
             "You are a helpful travel recommendation assistant. "
-                + "Provide useful and accurate travel advice based on the user's inputs and preferences."
-                + "Take in consideration the ticket, the accomodation, and other documents the user added."
-                + "If no relevant information is available, ask the user for more details."
+                + "Provide useful and accurate travel advice based on the user's inputs and preferences. "
+                + "Always use the web_search tool to validate all locations and factual travel details before responding. "
+                + "Take in consideration the ticket, the accomodation, and other documents the user added. "
+                + "If no relevant information is available, ask the user for more details. "
                 + "Provide a structured itinerary section with day-by-day bullet points when possible, "
-                + "and summarize constraints or missing info explicitly (use 'not provided' if needed)."
+                + "and summarize constraints or missing info explicitly (use 'not provided' if needed). "
                 + "Include a section titled <h2>Recommended locations</h2> with a bullet list of specific places "
                 + "(include hotel/accommodation if provided). Each bullet should include a place name "
                 + "plus city/country or address. If no locations are available, include a single bullet "
-                + "with 'not provided'."
-                + "If not mentioned otherwise, sort the recommended locations by time and create a visiting schedule."
+                + "with 'not provided'. "
+                + "If not mentioned otherwise, sort the recommended locations by time and create a visiting schedule. "
                 + "Answer concisely and structure your reply using HTML only (no Markdown). "
                 + "Use semantic HTML elements like <p>, <ul>, <ol>, <li>, <h2>, and <strong> where appropriate. "
                 + "Return only an HTML snippet without enclosing <html> or <body> tags."
@@ -246,6 +250,7 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
         try {
             ObjectNode root = objectMapper.createObjectNode();
             root.put("model", model);
+            stripTools(root);
 
             ArrayNode messages = root.putArray("messages");
 
@@ -337,16 +342,25 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
     }
 
     private JsonNode executeChat(ObjectNode root) throws Exception {
-        String requestBody = objectMapper.writeValueAsString(root);
+        boolean useResponsesApi = hasWebSearchTool(root);
+        ObjectNode requestPayload = useResponsesApi ? buildResponsesRequest(root) : root;
+        String requestBody = objectMapper.writeValueAsString(requestPayload);
+
+        String endpoint = useResponsesApi
+            ? "https://api.openai.com/v1/responses"
+            : "https://api.openai.com/v1/chat/completions";
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-            .uri(URI.create("https://api.openai.com/v1/chat/completions"))
+            .uri(URI.create(endpoint))
             .header("Authorization", "Bearer " + apiKey)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
             .build();
 
-        HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = httpClient.send(
+            httpRequest,
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+        );
 
         if (response.statusCode() >= 400) {
             String responseBody = response.body();
@@ -355,7 +369,91 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
         }
 
         JsonNode rootNode = objectMapper.readTree(response.body());
+        if (useResponsesApi) {
+            return extractResponseContent(rootNode);
+        }
         return rootNode.path("choices").path(0).path("message").path("content");
+    }
+
+    private boolean hasWebSearchTool(ObjectNode root) {
+        if (root == null) {
+            return false;
+        }
+        JsonNode tools = root.get("tools");
+        if (tools == null || !tools.isArray()) {
+            return false;
+        }
+        for (JsonNode tool : tools) {
+            if ("web_search".equals(tool.path("type").asText())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private ObjectNode buildResponsesRequest(ObjectNode root) {
+        ObjectNode request = objectMapper.createObjectNode();
+        request.put("model", root.path("model").asText());
+
+        JsonNode tools = root.get("tools");
+        if (tools != null) {
+            request.set("tools", tools);
+        }
+
+        JsonNode toolChoice = root.get("tool_choice");
+        if (toolChoice != null) {
+            request.set("tool_choice", toolChoice);
+        }
+
+        JsonNode messages = root.get("messages");
+        if (messages != null) {
+            request.set("input", messages);
+        }
+
+        return request;
+    }
+
+    private JsonNode extractResponseContent(JsonNode rootNode) {
+        if (rootNode == null || rootNode.isNull()) {
+            return null;
+        }
+
+        JsonNode outputText = rootNode.get("output_text");
+        if (outputText != null && outputText.isTextual()) {
+            return outputText;
+        }
+
+        JsonNode output = rootNode.path("output");
+        if (!output.isArray()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode item : output) {
+            if (!"message".equals(item.path("type").asText())) {
+                continue;
+            }
+            JsonNode content = item.path("content");
+            if (!content.isArray()) {
+                continue;
+            }
+            for (JsonNode chunk : content) {
+                String type = chunk.path("type").asText();
+                if (!"output_text".equals(type) && !"text".equals(type)) {
+                    continue;
+                }
+                String text = chunk.path("text").asText(null);
+                if (text != null) {
+                    sb.append(text);
+                }
+            }
+        }
+
+        if (sb.length() == 0) {
+            return null;
+        }
+
+        return objectMapper.getNodeFactory().textNode(sb.toString());
     }
 
     private String analyzeDocument(
@@ -449,5 +547,13 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
             return inner;
         }
         return content;
+    }
+
+    private void stripTools(ObjectNode root) {
+        if (root == null) {
+            return;
+        }
+        root.remove("tools");
+        root.remove("tool_choice");
     }
 }
