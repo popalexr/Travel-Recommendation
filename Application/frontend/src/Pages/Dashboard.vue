@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { ref, computed, watch, onMounted, nextTick } from "vue"
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue"
 import { Button } from "@/components/ui/button"
 import UploadAttachmentModal from "@/components/UploadAttachmentModal.vue"
 import TicketUploadModal from "@/components/TicketUploadModal.vue"
@@ -7,6 +7,7 @@ import AccommodationUploadModal from "@/components/AccommodationUploadModal.vue"
 import OtherUploadModal from "@/components/OtherUploadModal.vue"
 import AttachmentOptionsModal from "@/components/AttachmentOptionsModal.vue"
 import RecommendationMap from "@/components/RecommendationMap.vue"
+import ChatContextMenu from "@/components/ChatContextMenu.vue"
 
 const props = defineProps({
   user: {
@@ -18,6 +19,9 @@ const props = defineProps({
 const isLoggingOut = ref(false)
 const error = ref("")
 const accountMenuOpen = ref(false)
+const contextMenuOpen = ref(false)
+const contextMenuChat = ref(null)
+const contextMenuPosition = ref({ x: 0, y: 0 })
 const activeThread = ref(null)
 const previousRecommendations = ref([])
 const chatMessages = ref([])
@@ -64,6 +68,7 @@ const dataError = ref("")
 const isLoadingData = ref(true)
 const hasCompletedUploadStep = ref(false)
 const hasStartedChat = ref(false)
+const isDeletingChat = ref(false)
 const pendingMessages = ref([])
 const ticketUploaded = ref(false)
 const accommodationUploaded = ref(false)
@@ -651,6 +656,17 @@ onMounted(() => {
       autoResizeMessage()
     }
   })
+  window.addEventListener("click", handleGlobalClick)
+  window.addEventListener("scroll", closeContextMenu, true)
+  window.addEventListener("resize", closeContextMenu)
+  window.addEventListener("keydown", handleGlobalKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener("click", handleGlobalClick)
+  window.removeEventListener("scroll", closeContextMenu, true)
+  window.removeEventListener("resize", closeContextMenu)
+  window.removeEventListener("keydown", handleGlobalKeydown)
 })
 
 function toggleAccountMenu() {
@@ -661,12 +677,40 @@ function closeAccountMenu() {
   accountMenuOpen.value = false
 }
 
+function openChatContextMenu(event, rec) {
+  if (!rec || !rec.id) return
+  event.preventDefault()
+  contextMenuChat.value = rec
+  contextMenuOpen.value = true
+  contextMenuPosition.value = {
+    x: event.clientX,
+    y: event.clientY,
+  }
+}
+
+function closeContextMenu() {
+  contextMenuOpen.value = false
+  contextMenuChat.value = null
+}
+
+function handleGlobalClick() {
+  if (!contextMenuOpen.value) return
+  closeContextMenu()
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key === "Escape") {
+    closeContextMenu()
+  }
+}
+
 function goToSettings() {
   closeAccountMenu()
   window.location.href = "/settings"
 }
 
 function startNewChat() {
+  closeContextMenu()
   activeThread.value = null
   currentChatId.value = null
   chatMessages.value = []
@@ -740,6 +784,7 @@ function cancelEditing() {
 
 async function selectChat(rec) {
   if (!rec || !rec.id) return
+  closeContextMenu()
   activeThread.value = rec.id
   currentChatId.value = rec.id
   ticketUploaded.value = false
@@ -768,6 +813,40 @@ async function selectChat(rec) {
     dataError.value = "Unexpected error loading chat messages."
   } finally {
     isLoadingData.value = false
+  }
+}
+
+async function deleteChat(rec) {
+  if (!rec || !rec.id || isDeletingChat.value) return
+  isDeletingChat.value = true
+  dataError.value = ""
+  closeContextMenu()
+
+  try {
+    const response = await fetch(`/api/chat/${rec.id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      dataError.value = payload?.error ?? "Unable to delete chat."
+      return
+    }
+
+    const updated = previousRecommendations.value.filter((item) => item.id !== rec.id)
+    previousRecommendations.value = updated
+
+    if (currentChatId.value === rec.id || activeThread.value === rec.id) {
+      if (updated.length > 0) {
+        await selectChat(updated[0])
+      } else {
+        startNewChat()
+      }
+    }
+  } catch (err) {
+    dataError.value = "Unexpected error deleting chat."
+  } finally {
+    isDeletingChat.value = false
   }
 }
 
@@ -1350,6 +1429,7 @@ function removeOtherFile(index) {
             v-for="rec in previousRecommendations"
             :key="rec.id || rec.title"
             @click="selectChat(rec)"
+            @contextmenu="openChatContextMenu($event, rec)"
             :class="[
               'w-full rounded-xl px-3 py-3 text-left transition-all',
               activeThread === rec.id
@@ -1367,6 +1447,13 @@ function removeOtherFile(index) {
           </p>
         </template>
       </nav>
+      <ChatContextMenu
+        :open="contextMenuOpen"
+        :chat="contextMenuChat"
+        :position="contextMenuPosition"
+        :is-deleting="isDeletingChat"
+        @delete="deleteChat"
+      />
       <div class="border-t border-border/50 pt-4">
         <div class="relative">
           <button

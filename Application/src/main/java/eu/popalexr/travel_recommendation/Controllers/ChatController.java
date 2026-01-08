@@ -14,6 +14,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -685,6 +687,33 @@ public class ChatController {
             .collect(Collectors.toList());
 
         return ResponseEntity.ok(Map.of("messages", dto));
+    }
+
+    @DeleteMapping("/api/chat/{id}")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> deleteChat(
+        @PathVariable("id") Long chatId,
+        HttpServletRequest httpRequest
+    ) {
+        Object uid = httpRequest.getAttribute(SessionConstants.AUTHENTICATED_USER_ID);
+        if (!(uid instanceof Long userId)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                Map.of("error", "Authentication required.")
+            );
+        }
+
+        Chat chat = chatRepository.findByIdAndUserId(chatId, userId).orElse(null);
+        if (chat == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                Map.of("error", "Chat not found.")
+            );
+        }
+
+        tripProfileRepository.deleteByChatId(chatId);
+        chatMessageRepository.deleteByChatId(chatId);
+        chatRepository.delete(chat);
+
+        return ResponseEntity.ok(Map.of("success", true));
     }
 
     private List<Map<String, Object>> buildMessageDtos(List<ChatMessage> messages) {
