@@ -4,6 +4,7 @@ import eu.popalexr.travel_recommendation.Models.ChatMessage;
 import eu.popalexr.travel_recommendation.Models.TripProfile;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 public interface OpenAiChatService {
 
@@ -13,6 +14,12 @@ public interface OpenAiChatService {
      * (no outer &lt;html&gt; or &lt;body&gt; tags).
      */
     String chat(List<ChatMessage> messages, TripProfile profile);
+
+    /**
+     * Streams the assistant reply. The provided consumer is invoked with each incremental
+     * text delta. The full concatenated reply is returned once streaming completes.
+     */
+    String streamChat(List<ChatMessage> messages, TripProfile profile, Consumer<String> onDelta);
 
     /**
      * Generates a short, human-readable title for a chat,

@@ -15,6 +15,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,12 +26,15 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -39,6 +44,8 @@ public class ChatController {
 
     private static final Pattern CODE_FENCE_PATTERN =
         Pattern.compile("^```(?:\\w+)?\\s*([\\s\\S]*?)\\s*```$", Pattern.DOTALL);
+
+    private static final Logger LOG = LoggerFactory.getLogger(ChatController.class);
 
     private final OpenAiChatService chatService;
     private final ChatRepository chatRepository;
@@ -147,22 +154,24 @@ public class ChatController {
             }
             User user = userOpt.get();
 
-            Chat chat;
+            Chat resolvedChat;
             boolean isNewChat = request.getChatId() == null;
 
             if (isNewChat) {
-                chat = Chat.create(user, null);
-                chat = chatRepository.save(chat);
+                Chat created = Chat.create(user, null);
+                resolvedChat = chatRepository.save(created);
             } else {
-                chat = chatRepository.findByIdAndUserId(request.getChatId(), userId)
+                resolvedChat = chatRepository.findByIdAndUserId(request.getChatId(), userId)
                     .orElse(null);
-                if (chat == null) {
+                if (resolvedChat == null) {
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                         Map.of("error", "Chat not found.")
                     );
                 }
             }
 
+            final Chat chat = resolvedChat;
+            final boolean newChat = isNewChat;
             String userMessageText = request.getMessage().trim();
             ChatMessage userMessage = ChatMessage.create(chat, "user", userMessageText);
             chatMessageRepository.save(userMessage);
@@ -196,6 +205,86 @@ public class ChatController {
                     "messages", List.of(userDto, assistantMessage)
                 )
             );
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                Map.of("error", "OpenAI API key is not configured on the server.")
+            );
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(
+                Map.of("error", "Failed to contact the recommendation engine.")
+            );
+        }
+    }
+
+    @PostMapping(value = "/api/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public ResponseEntity<?> chatStream(@RequestBody ChatRequest request, HttpServletRequest httpRequest) {
+        if (request == null || request.getMessage() == null || request.getMessage().isBlank()) {
+            return ResponseEntity.badRequest().body(
+                Map.of("error", "Message is required.")
+            );
+        }
+
+        Object uid = httpRequest.getAttribute(SessionConstants.AUTHENTICATED_USER_ID);
+        if (!(uid instanceof Long userId)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                Map.of("error", "Authentication required.")
+            );
+        }
+
+        try {
+            Optional<User> userOpt = userRepository.findById(userId);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    Map.of("error", "User not found.")
+                );
+            }
+            User user = userOpt.get();
+
+            Chat chat;
+            boolean isNewChat = request.getChatId() == null;
+
+            if (isNewChat) {
+                chat = Chat.create(user, null);
+                chat = chatRepository.save(chat);
+            } else {
+                chat = chatRepository.findByIdAndUserId(request.getChatId(), userId)
+                    .orElse(null);
+                if (chat == null) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                        Map.of("error", "Chat not found.")
+                    );
+                }
+            }
+
+            final Chat streamingChat = chat;
+            final boolean newChat = isNewChat;
+
+            String userMessageText = request.getMessage().trim();
+            ChatMessage userMessage = ChatMessage.create(streamingChat, "user", userMessageText);
+            chatMessageRepository.save(userMessage);
+
+            SseEmitter emitter = new SseEmitter(0L);
+            try {
+                emitter.send(
+                    SseEmitter.event()
+                        .name("meta")
+                        .data(
+                            Map.of(
+                                "chatId", streamingChat.getId(),
+                                "chatTitle", streamingChat.getTitle(),
+                                "userMessage", messageDto(userMessage)
+                            )
+                        )
+                );
+            } catch (Exception ignored) {
+                // If the client disconnects immediately we still persist the message for history.
+            }
+
+            CompletableFuture.runAsync(() -> streamAssistantReply(emitter, streamingChat, userMessageText, newChat));
+
+            return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
+                .body(emitter);
         } catch (IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
                 Map.of("error", "OpenAI API key is not configured on the server.")
@@ -714,6 +803,127 @@ public class ChatController {
         chatRepository.delete(chat);
 
         return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    private void streamAssistantReply(SseEmitter emitter, Chat chat, String userMessageText, boolean isNewChat) {
+        List<ChatMessage> history = chatMessageRepository.findByChatIdOrderByIdAsc(chat.getId());
+        TripProfile profile = tripProfileRepository.findByChatId(chat.getId()).orElse(null);
+
+        String reply;
+        boolean usedStreamingFallback = false;
+        try {
+            reply = stripCodeFences(
+                chatService.streamChat(history, profile, chunk -> sendDelta(emitter, chunk))
+            );
+        } catch (IllegalStateException e) {
+            sendSseError(emitter, "OpenAI API key is not configured on the server.");
+            return;
+        } catch (Exception streamingError) {
+            LOG.warn("Streaming failed for chat {}: {}", chat.getId(), streamingError.getMessage());
+            sendStreamWarning(emitter, "Streaming unavailable, falling back to full response.", streamingError);
+            usedStreamingFallback = true;
+            try {
+                reply = stripCodeFences(chatService.chat(history, profile));
+            } catch (IllegalStateException e) {
+                sendSseError(emitter, "OpenAI API key is not configured on the server.");
+                return;
+            } catch (Exception e) {
+                sendSseError(emitter, "Failed to contact the recommendation engine.");
+                return;
+            }
+        }
+
+        if (reply == null || reply.isBlank()) {
+            reply = "The recommendation engine did not return any content.";
+        }
+
+        ChatMessage assistantMessageEntity = ChatMessage.create(chat, "assistant", reply);
+        assistantMessageEntity.setItineraryJson(chatService.extractItineraryJson(reply));
+        chatMessageRepository.save(assistantMessageEntity);
+
+        if (isNewChat) {
+            String title = "New travel chat";
+            try {
+                title = chatService.generateTitle(userMessageText, reply);
+            } catch (Exception ignored) {
+                // Title generation should not block delivering recommendations.
+            }
+            chat.setTitle(title);
+            chatRepository.save(chat);
+        }
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("chatId", chat.getId());
+        payload.put("chatTitle", chat.getTitle());
+        Map<String, Object> assistantDto = messageDto(assistantMessageEntity);
+        if (usedStreamingFallback) {
+            assistantDto.put("streamingFallback", true);
+        }
+        payload.put("message", assistantDto);
+
+        try {
+            emitter.send(SseEmitter.event().name("done").data(payload));
+        } catch (Exception ignored) {
+            // Client might have disconnected; still persist the reply.
+        } finally {
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {
+                // Ignore completion issues.
+            }
+        }
+    }
+
+    private void sendDelta(SseEmitter emitter, String chunk) {
+        if (emitter == null || chunk == null || chunk.isBlank()) {
+            return;
+        }
+        try {
+            emitter.send(
+                SseEmitter.event()
+                    .name("delta")
+                    .data(Map.of("content", chunk))
+            );
+        } catch (Exception ignored) {
+            // Client likely disconnected.
+        }
+    }
+
+    private void sendStreamWarning(SseEmitter emitter, String message, Exception cause) {
+        if (emitter == null) {
+            return;
+        }
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("warning", message);
+            if (cause != null && cause.getMessage() != null && !cause.getMessage().isBlank()) {
+                payload.put("reason", cause.getMessage());
+            }
+            emitter.send(
+                SseEmitter.event()
+                    .name("stream-warning")
+                    .data(payload)
+            );
+        } catch (Exception ignored) {
+            // Ignore if the client is gone.
+        }
+    }
+
+    private void sendSseError(SseEmitter emitter, String message) {
+        if (emitter == null) {
+            return;
+        }
+        try {
+            emitter.send(SseEmitter.event().name("error").data(Map.of("error", message)));
+        } catch (Exception ignored) {
+            // Ignore if the client is gone.
+        } finally {
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {
+                // Ignore completion issues.
+            }
+        }
     }
 
     private List<Map<String, Object>> buildMessageDtos(List<ChatMessage> messages) {

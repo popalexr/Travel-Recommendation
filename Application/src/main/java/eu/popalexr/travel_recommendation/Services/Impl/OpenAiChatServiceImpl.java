@@ -13,6 +13,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,6 +23,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.function.Consumer;
 
 @Service
 public class OpenAiChatServiceImpl implements OpenAiChatService {
@@ -59,6 +63,131 @@ public class OpenAiChatServiceImpl implements OpenAiChatService {
             return contentNode.asText();
         } catch (Exception e) {
             throw new RuntimeException("Failed to call OpenAI API", e);
+        }
+    }
+
+    @Override
+    public String streamChat(List<ChatMessage> messages, TripProfile profile, Consumer<String> onDelta) {
+        requireApiKey();
+
+        if (onDelta == null) {
+            return chat(messages, profile);
+        }
+
+        try {
+            ObjectNode root = baseChatRequest(profile);
+            ArrayNode apiMessages = (ArrayNode) root.get("messages");
+
+            appendHistory(apiMessages, messages);
+            root.put("stream", true);
+
+            boolean useResponsesApi = hasWebSearchTool(root);
+            ObjectNode requestPayload = useResponsesApi ? buildResponsesRequest(root) : root;
+            requestPayload.put("stream", true);
+
+            String endpoint = useResponsesApi
+                ? "https://api.openai.com/v1/responses"
+                : "https://api.openai.com/v1/chat/completions";
+
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                .uri(URI.create(endpoint))
+                .header("Authorization", "Bearer " + apiKey)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestPayload), StandardCharsets.UTF_8));
+
+            HttpRequest httpRequest = requestBuilder.build();
+
+            HttpResponse<InputStream> response = httpClient.send(
+                httpRequest,
+                HttpResponse.BodyHandlers.ofInputStream()
+            );
+
+            if (response.statusCode() >= 400) {
+                try (InputStream errorStream = response.body()) {
+                    String responseBody = new String(errorStream.readAllBytes(), StandardCharsets.UTF_8);
+                    String errorDetails = responseBody.isBlank() ? "" : (": " + responseBody);
+                    throw new RuntimeException("OpenAI API returned status " + response.statusCode() + errorDetails);
+                }
+            }
+
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+                String line;
+                StringBuilder fullReply = new StringBuilder();
+
+                while ((line = reader.readLine()) != null) {
+                    String trimmed = line.trim();
+                    if (trimmed.isEmpty()) {
+                        continue;
+                    }
+                    if (trimmed.startsWith("event:")) {
+                        // Ignore SSE event name lines; we only parse data payloads.
+                        continue;
+                    }
+                    if ("data: [DONE]".equals(trimmed)) {
+                        break;
+                    }
+                    if (trimmed.startsWith("data:")) {
+                        trimmed = trimmed.substring(5).trim();
+                    }
+                    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+                        // Skip non-JSON payloads.
+                        continue;
+                    }
+                    if (trimmed.isEmpty()) {
+                        continue;
+                    }
+
+                    if (useResponsesApi) {
+                        JsonNode node = objectMapper.readTree(trimmed);
+                        String type = node.path("type").asText();
+                        if ("response.error".equals(type)) {
+                            String message = node.path("error").path("message").asText("Failed to stream recommendation.");
+                            throw new RuntimeException(message);
+                        }
+                        if ("response.output_text.delta".equals(type)) {
+                            String delta = node.path("delta").asText("");
+                            if (delta != null && !delta.isBlank()) {
+                                onDelta.accept(delta);
+                                fullReply.append(delta);
+                            }
+                        }
+                        continue;
+                    }
+
+                    JsonNode rootNode = objectMapper.readTree(trimmed);
+                    JsonNode deltaNode = rootNode.path("choices").path(0).path("delta").path("content");
+                    if (deltaNode == null || deltaNode.isMissingNode()) {
+                        continue;
+                    }
+
+                    if (deltaNode.isArray()) {
+                        for (JsonNode item : deltaNode) {
+                            if (item != null && item.isTextual()) {
+                                String delta = item.asText();
+                                if (delta != null && !delta.isBlank()) {
+                                    onDelta.accept(delta);
+                                    fullReply.append(delta);
+                                }
+                            }
+                        }
+                    } else if (deltaNode.isTextual()) {
+                        String delta = deltaNode.asText();
+                        if (delta != null && !delta.isBlank()) {
+                            onDelta.accept(delta);
+                            fullReply.append(delta);
+                        }
+                    }
+                }
+
+                if (fullReply.length() == 0) {
+                    return "The recommendation engine did not return any content.";
+                }
+
+                return fullReply.toString();
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to stream from OpenAI API", e);
         }
     }
 

@@ -874,12 +874,147 @@ async function sendChatMessage() {
 
   chatMessages.value = [...chatMessages.value, localUserMessage]
 
+  const streamState = {
+    userMessage: localUserMessage,
+    assistantMessage: null,
+  }
+
+  const ensureAssistantMessage = () => {
+    if (!streamState.assistantMessage) {
+      streamState.assistantMessage = {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        content: "",
+        timestamp,
+      }
+      chatMessages.value = [...chatMessages.value, streamState.assistantMessage]
+    }
+    return streamState.assistantMessage
+  }
+
+  const applyChatMeta = (payload) => {
+    if (!payload || typeof payload !== "object") return
+
+    if (payload.chatId) {
+      currentChatId.value = payload.chatId
+      activeThread.value = payload.chatId
+      hasStartedChat.value = true
+      hasCompletedUploadStep.value = true
+      const existingIndex = previousRecommendations.value.findIndex((item) => item.id === payload.chatId)
+      const existing = existingIndex >= 0 ? previousRecommendations.value[existingIndex] : null
+      const title = payload.chatTitle || existing?.title || "Untitled chat"
+      if (existingIndex >= 0) {
+        previousRecommendations.value.splice(existingIndex, 1, {
+          ...existing,
+          title: title || existing.title || "Untitled chat",
+        })
+      } else {
+        previousRecommendations.value = [
+          {
+            id: payload.chatId,
+            title,
+            subtitle: "AI travel recommendations",
+          },
+          ...previousRecommendations.value,
+        ]
+      }
+    }
+
+    if (payload.userMessage) {
+      const mergedUser = {
+        ...payload.userMessage,
+        timestamp,
+      }
+      const localIndex = chatMessages.value.findIndex((msg) => msg.id === streamState.userMessage.id)
+      if (localIndex >= 0) {
+        chatMessages.value.splice(localIndex, 1, mergedUser)
+        chatMessages.value = [...chatMessages.value]
+      } else {
+        chatMessages.value = [...chatMessages.value, mergedUser]
+      }
+      streamState.userMessage = mergedUser
+    }
+  }
+
+  const applyAssistantDelta = (payload) => {
+    const delta = payload?.content ?? payload?.delta ?? ""
+    if (!delta) return
+    const assistant = ensureAssistantMessage()
+    assistant.content += delta
+    chatMessages.value = [...chatMessages.value]
+  }
+
+  const applyAssistantDone = (payload) => {
+    if (!payload || typeof payload !== "object") return
+    if (payload.chatId) {
+      applyChatMeta(payload)
+    }
+    const finalMessage = payload.message ?? null
+    if (!finalMessage) return
+
+    hasCompletedUploadStep.value = true
+    hasStartedChat.value = true
+
+    if (streamState.assistantMessage) {
+      const idx = chatMessages.value.findIndex((msg) => msg.id === streamState.assistantMessage.id)
+      if (idx >= 0) {
+        chatMessages.value.splice(idx, 1, finalMessage)
+        chatMessages.value = [...chatMessages.value]
+        streamState.assistantMessage = finalMessage
+        return
+      }
+    }
+    chatMessages.value = [...chatMessages.value, finalMessage]
+    streamState.assistantMessage = finalMessage
+  }
+
+  const processSseEvent = (rawEvent) => {
+    if (!rawEvent || !rawEvent.trim()) return
+    const lines = rawEvent.split(/\r?\n/)
+    let eventName = "message"
+    const dataLines = []
+
+    for (const line of lines) {
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim()
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim())
+      }
+    }
+
+    if (!dataLines.length) return
+
+    let payload
+    try {
+      payload = JSON.parse(dataLines.join("\n"))
+    } catch (err) {
+      return
+    }
+
+    if (eventName === "meta") {
+      applyChatMeta(payload)
+      return
+    }
+    if (eventName === "delta") {
+      applyAssistantDelta(payload)
+      return
+    }
+    if (eventName === "done") {
+      applyAssistantDone(payload)
+      return
+    }
+    if (eventName === "error") {
+      error.value = payload?.error ?? "Unable to get a recommendation."
+    }
+  }
+
   try {
-    const response = await fetch("/api/chat", {
+    const response = await fetch("/api/chat/stream", {
       method: "POST",
       credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
+        Accept: "text/event-stream",
       },
       body: JSON.stringify({
         message: text,
@@ -887,54 +1022,40 @@ async function sendChatMessage() {
       }),
     })
 
-    const payload = await response.json().catch(() => ({}))
-
     if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
       error.value = payload?.error ?? "Unable to get a recommendation."
       return
     }
 
-    if (payload && Array.isArray(payload.messages) && payload.messages.length) {
-      const updatedMessages = [...chatMessages.value]
-      const serverUser = payload.messages.find((msg) => msg.role === "user") ?? payload.messages[0]
-      const serverAssistant = payload.messages.find((msg) => msg.role === "assistant") ?? payload.message
-
-      if (serverUser) {
-        const localIndex = updatedMessages.findIndex((msg) => msg.id === localUserMessage.id)
-        const mergedUser = {
-          ...serverUser,
-          timestamp,
-        }
-        if (localIndex >= 0) {
-          updatedMessages.splice(localIndex, 1, mergedUser)
-        } else {
-          updatedMessages.push(mergedUser)
-        }
-      }
-
-      if (serverAssistant) {
-        updatedMessages.push(serverAssistant)
-      }
-
-      chatMessages.value = updatedMessages
-    } else if (payload && payload.message) {
-      chatMessages.value = [...chatMessages.value, payload.message]
+    if (!response.body) {
+      error.value = "Streaming is not available in this browser."
+      return
     }
 
-    if (!currentChatId.value && payload && payload.chatId) {
-      currentChatId.value = payload.chatId
-      activeThread.value = payload.chatId
-      previousRecommendations.value = [
-        {
-          id: payload.chatId,
-          title: payload.chatTitle || "Untitled chat",
-          subtitle: "AI travel recommendations",
-        },
-        ...previousRecommendations.value,
-      ]
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let separatorIndex = buffer.indexOf("\n\n")
+      while (separatorIndex !== -1) {
+        const rawEvent = buffer.slice(0, separatorIndex)
+        buffer = buffer.slice(separatorIndex + 2)
+        processSseEvent(rawEvent)
+        separatorIndex = buffer.indexOf("\n\n")
+      }
+    }
+
+    buffer += decoder.decode()
+    if (buffer.trim()) {
+      processSseEvent(buffer)
     }
   } catch (err) {
-    error.value = "Unexpected error contacting the recommendation engine."
+    error.value = err?.message ?? "Unexpected error contacting the recommendation engine."
   } finally {
     isSendingMessage.value = false
   }
